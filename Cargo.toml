@@ -1,0 +1,25 @@
+[package]
+name = "codeowners-stats"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Count the files each CODEOWNERS rule owns, and find rules that own nothing"
+license = "MIT"
+repository = "https://github.com/chdsbd/codeowners-stats"
+readme = "README.md"
+keywords = ["codeowners", "github", "git"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = [".github"]
+
+[dependencies]
+fancy-regex = "0.20.0"
+memchr = "2.8.3"
+memmap2 = "0.9.12"
+regex = "1.13.1"
+rustc-hash = "2.1.3"
+
+[profile.release]
+# The VS Code extension bundles a build per platform, so keep it small.
+strip = true
+lto = true
+codegen-units = 1
