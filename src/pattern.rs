@@ -2,6 +2,9 @@
 //! @snyk/github-codeowners: node-ignore 5.2.4's conversion, plus its
 //! fix for patterns ending in `/*`. This is a line-by-line port of
 //! node-ignore's replacers, so its quirks carry over too.
+//!
+//! The replacers are from node-ignore, Copyright (c) 2013 Kael Zhang
+//! <i@kael.me>, contributors, under the MIT License.
 
 use std::sync::{LazyLock, OnceLock};
 
