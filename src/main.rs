@@ -192,18 +192,23 @@ fn display_path(loaded: &Loaded) -> String {
         return "<stdin>".to_string();
     }
     let codeowners = absolute(&loaded.codeowners);
-    codeowners
-        .strip_prefix(absolute(&loaded.root))
-        .unwrap_or(&codeowners)
-        .display()
-        .to_string()
+    // Inside the repository, it's a repository path, written with `/` like
+    // the paths of the files it owns.
+    match codeowners.strip_prefix(absolute(&loaded.root)) {
+        Ok(relative) => relative
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect::<Vec<_>>()
+            .join("/"),
+        Err(_) => codeowners.display().to_string(),
+    }
 }
 
 fn check_size(loaded: &Loaded) -> Result<(), String> {
     if loaded.text.len() as u64 > MAX_CODEOWNERS_BYTES {
         return Err(format!(
             "{} is {} bytes, over GitHub's limit of {MAX_CODEOWNERS_BYTES}, so GitHub ignores it",
-            loaded.codeowners.display(),
+            display_path(loaded),
             loaded.text.len()
         ));
     }

@@ -149,7 +149,7 @@ fn rejects_codeowners_files_github_ignores_for_size() {
     assert_eq!(status, 2);
     assert!(
         stderr.ends_with(&format!(
-            "/.github/CODEOWNERS is {} bytes, over GitHub's limit of {limit}, so GitHub ignores it\n",
+            ": .github/CODEOWNERS is {} bytes, over GitHub's limit of {limit}, so GitHub ignores it\n",
             limit + 1
         )),
         "{stderr}"
