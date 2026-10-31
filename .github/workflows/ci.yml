@@ -6,7 +6,9 @@ on:
       - main
   pull_request:
 
-permissions: {}
+# Checking out a private repository needs read access.
+permissions:
+  contents: read
 
 jobs:
   test:
