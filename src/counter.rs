@@ -435,6 +435,12 @@ pub fn count_with<W>(rules: &Rules, threads: usize, work: W) -> Counts
 where
     W: Fn(&mut dyn FnMut(&[u8])) -> bool + Sync,
 {
+    // Without spawning, which WebAssembly can't.
+    if threads <= 1 {
+        let mut counter = Counter::new(rules);
+        while work(&mut |file| counter.add(file)) {}
+        return merge(rules, vec![counter.into_tally()]);
+    }
     let tallies: Vec<Tally> = std::thread::scope(|scope| {
         let workers: Vec<_> = (0..threads.max(1))
             .map(|_| {

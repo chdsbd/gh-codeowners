@@ -7,6 +7,7 @@ use codeowners_stats::codeowners::{
     parse_codeowners, repo_root_for_codeowners,
 };
 use codeowners_stats::counter::Rule;
+use codeowners_stats::report::{Json, Status, ownership_json, problem_json, rule_json};
 use codeowners_stats::{count_tracked_files, owners_of};
 
 const USAGE: &str = "Usage: codeowners-stats [options] [root]
@@ -31,34 +32,6 @@ Options:
   -j, --threads <n>    Threads to count with (default: one per CPU)
   -h, --help           Show this help
   -v, --version        Show the version";
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Status {
-    // Determines the owners of at least one file.
-    Active,
-    // Matches files, but a later rule determines all their owners.
-    Overridden,
-    // Matches no files at all.
-    Unmatched,
-}
-
-impl Status {
-    fn name(self) -> &'static str {
-        match self {
-            Status::Active => "active",
-            Status::Overridden => "overridden",
-            Status::Unmatched => "unmatched",
-        }
-    }
-
-    fn note(self) -> &'static str {
-        match self {
-            Status::Active => "",
-            Status::Overridden => "every matching file is owned by a later rule",
-            Status::Unmatched => "no files match",
-        }
-    }
-}
 
 struct RuleStats {
     rule: CodeownersRule,
@@ -267,13 +240,7 @@ fn codeowners_stats(args: &Args, loaded: Loaded) -> Result<Stats, String> {
             .map(|(rule, c)| RuleStats {
                 rule,
                 files: c.owned,
-                status: if c.owned > 0 {
-                    Status::Active
-                } else if c.matches_any {
-                    Status::Overridden
-                } else {
-                    Status::Unmatched
-                },
+                status: Status::new(c.owned, c.matches_any),
             })
             .collect(),
     })
@@ -342,79 +309,6 @@ fn format_text(stats: &Stats, rules: &[&RuleStats]) -> String {
     out
 }
 
-fn json_string(s: &str) -> String {
-    let mut out = String::from('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{8}' => out.push_str("\\b"),
-            '\u{c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => write!(out, "\\u{:04x}", c as u32).unwrap(),
-            c => out.push(c),
-        }
-    }
-    out.push('"');
-    out
-}
-
-enum Json {
-    Null,
-    Number(usize),
-    String(String),
-    Array(Vec<Json>),
-    Object(Vec<(&'static str, Json)>),
-}
-
-impl Json {
-    fn string(s: impl Into<String>) -> Json {
-        Json::String(s.into())
-    }
-
-    fn strings(items: &[String]) -> Json {
-        Json::Array(items.iter().map(|s| Json::string(s.as_str())).collect())
-    }
-
-    // Same layout as JSON.stringify(value, null, 2).
-    fn write(&self, out: &mut String, indent: usize) {
-        let pad = "  ".repeat(indent + 1);
-        match self {
-            Json::Null => out.push_str("null"),
-            Json::Number(n) => write!(out, "{n}").unwrap(),
-            Json::String(s) => out.push_str(&json_string(s)),
-            Json::Array(items) if items.is_empty() => out.push_str("[]"),
-            Json::Array(items) => {
-                out.push_str("[\n");
-                for (i, item) in items.iter().enumerate() {
-                    out.push_str(&pad);
-                    item.write(out, indent + 1);
-                    out.push_str(if i + 1 == items.len() { "\n" } else { ",\n" });
-                }
-                write!(out, "{}]", "  ".repeat(indent)).unwrap();
-            }
-            Json::Object(fields) if fields.is_empty() => out.push_str("{}"),
-            Json::Object(fields) => {
-                out.push_str("{\n");
-                for (i, (key, value)) in fields.iter().enumerate() {
-                    write!(out, "{pad}{}: ", json_string(key)).unwrap();
-                    value.write(out, indent + 1);
-                    out.push_str(if i + 1 == fields.len() { "\n" } else { ",\n" });
-                }
-                write!(out, "{}}}", "  ".repeat(indent)).unwrap();
-            }
-        }
-    }
-
-    fn format(&self) -> String {
-        let mut out = String::new();
-        self.write(&mut out, 0);
-        out
-    }
-}
-
 fn path_json(path: &Path) -> Json {
     Json::string(path.to_string_lossy())
 }
@@ -430,15 +324,7 @@ fn format_json(stats: &Stats, rules: &[&RuleStats]) -> String {
             Json::Array(
                 rules
                     .iter()
-                    .map(|r| {
-                        Json::Object(vec![
-                            ("line", Json::Number(r.rule.lineno + 1)),
-                            ("pattern", Json::string(r.rule.pattern.as_str())),
-                            ("owners", Json::strings(&r.rule.owners)),
-                            ("files", Json::Number(r.files)),
-                            ("status", Json::string(r.status.name())),
-                        ])
-                    })
+                    .map(|r| rule_json(&r.rule, r.files, r.status))
                     .collect(),
             ),
         ),
@@ -510,27 +396,7 @@ fn format_ownership(
                 Json::Array(
                     files
                         .iter()
-                        .map(|(path, rule)| {
-                            Json::Object(vec![
-                                ("path", Json::string(path.as_str())),
-                                (
-                                    "line",
-                                    rule.as_ref()
-                                        .map_or(Json::Null, |r| Json::Number(r.lineno + 1)),
-                                ),
-                                (
-                                    "pattern",
-                                    rule.as_ref()
-                                        .map_or(Json::Null, |r| Json::string(r.pattern.as_str())),
-                                ),
-                                (
-                                    "owners",
-                                    rule.as_ref().map_or(Json::Array(Vec::new()), |r| {
-                                        Json::strings(&r.owners)
-                                    }),
-                                ),
-                            ])
-                        })
+                        .map(|(path, rule)| ownership_json(path, rule.as_ref()))
                         .collect(),
                 ),
             ),
@@ -565,18 +431,7 @@ fn format_problems(loaded: &Loaded, problems: &[LineProblem], json: bool) -> Str
             ("codeowners", path_json(&loaded.codeowners)),
             (
                 "problems",
-                Json::Array(
-                    problems
-                        .iter()
-                        .map(|p| {
-                            Json::Object(vec![
-                                ("line", p.lineno.map_or(Json::Null, |n| Json::Number(n + 1))),
-                                ("severity", Json::string(severity(p))),
-                                ("message", Json::string(p.message.as_str())),
-                            ])
-                        })
-                        .collect(),
-                ),
+                Json::Array(problems.iter().map(problem_json).collect()),
             ),
         ])
         .format();

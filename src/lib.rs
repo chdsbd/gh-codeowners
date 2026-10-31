@@ -6,6 +6,7 @@ pub mod codeowners;
 pub mod counter;
 pub mod index;
 pub mod pattern;
+pub mod report;
 
 use std::path::Path;
 use std::sync::{Mutex, mpsc};

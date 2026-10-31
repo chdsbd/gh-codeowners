@@ -1,0 +1,22 @@
+[package]
+name = "codeowners-stats-wasm"
+version = "0.0.0"
+edition = "2024"
+publish = false
+description = "codeowners-stats as WebAssembly, for the VS Code extension on platforms without the native CLI"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+codeowners-stats = { path = ".." }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+# Not part of the codeowners-stats package.
+[workspace]
