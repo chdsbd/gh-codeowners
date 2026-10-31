@@ -1,6 +1,6 @@
 // Times parsing the index alone:
 // cargo run --release --example parse_index <root> [threads]
-use codeowners_stats::index::Index;
+use gh_codeowners::index::Index;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Instant;
 

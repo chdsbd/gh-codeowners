@@ -1,11 +1,11 @@
 [package]
-name = "codeowners-stats"
+name = "gh-codeowners"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Count the files each CODEOWNERS rule owns, and find rules that own nothing"
 license = "MIT"
-repository = "https://github.com/chdsbd/codeowners-stats"
+repository = "https://github.com/chdsbd/gh-codeowners"
 readme = "README.md"
 keywords = ["codeowners", "github", "git"]
 categories = ["command-line-utilities", "development-tools"]

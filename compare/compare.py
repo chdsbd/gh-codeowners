@@ -4,12 +4,12 @@
 # ///
 """Compare CODEOWNERS libraries with GitHub on tests/github.txt.
 
-Runs codeowners-stats, codeowners-rs, hmarr/codeowners (Go), sbdchd/codeowners
+Runs gh-codeowners, codeowners-rs, hmarr/codeowners (Go), sbdchd/codeowners
 (Python) and the extension's @snyk/github-codeowners fork (Node) over every
 recorded case, then prints how often each agrees with GitHub and the cases
 where it doesn't. Needs cargo, go and npm on PATH; a library whose tool is
 missing is skipped, unless --require-all is passed. Exits with status 1 if
-codeowners-stats disagrees with GitHub. In GitHub Actions, it also writes a
+gh-codeowners disagrees with GitHub. In GitHub Actions, it also writes a
 table to the job summary.
 
     uv run compare/compare.py [--limit N] [--require-all]
@@ -38,7 +38,7 @@ def rust() -> dict[str, list[str]]:
     lines = run(["cargo", "run", "-q", "--release", "--", str(FIXTURE)], HERE / "rust")
     rows = [line.split() for line in lines if line]
     return {
-        "codeowners-stats": [row[0] for row in rows],
+        "gh-codeowners": [row[0] for row in rows],
         "codeowners-rs": [row[1] for row in rows],
     }
 
@@ -119,14 +119,14 @@ def main() -> None:
         summary.append(
             f"| {name} | {len(cases) - len(diffs)}/{len(cases)} | {len(by_line)} |"
         )
-        if name == "codeowners-stats" and diffs:
+        if name == "gh-codeowners" and diffs:
             failed = True
 
     if path := os.environ.get("GITHUB_STEP_SUMMARY"):
         with open(path, "a", encoding="utf-8") as f:
             f.write("\n".join(summary) + "\n")
     if failed:
-        sys.exit("codeowners-stats disagrees with GitHub")
+        sys.exit("gh-codeowners disagrees with GitHub")
 
 
 if __name__ == "__main__":

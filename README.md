@@ -1,11 +1,11 @@
-# codeowners-stats
+# gh-codeowners
 
 Count the files each [CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners) rule owns, and find rules that own nothing.
 
 A file counts towards the last rule that matches it, like on GitHub, so a rule can match files and still own none of them.
 
 ```
-$ codeowners-stats
+$ gh-codeowners
 .github/CODEOWNERS: 12 rules, 163 files, 0 files with no owner, 2 rules owning no files
 
 line  files  pattern
@@ -21,13 +21,15 @@ Files are the ones in git's index: tracked files, which are what GitHub sees onc
 ## Install
 
 ```
-cargo install --git https://github.com/chdsbd/codeowners-stats
+cargo install --git https://github.com/chdsbd/gh-codeowners
 ```
+
+This installs the `gh-codeowners` command.
 
 ## CLI
 
 ```
-codeowners-stats [options] [root]
+gh-codeowners [options] [root]
 
   --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one
                        GitHub would use)
@@ -45,14 +47,14 @@ codeowners-stats [options] [root]
 To find who owns a file, like GitHub shows when you hover over its code owners icon:
 
 ```
-$ codeowners-stats --owner-of src/app.ts
+$ gh-codeowners --owner-of src/app.ts
 src/app.ts: @acme/web, from .github/CODEOWNERS:5 /src/
 ```
 
 To check CODEOWNERS for mistakes, including lines GitHub accepts but that never match:
 
 ```
-$ codeowners-stats --errors
+$ gh-codeowners --errors
 .github/CODEOWNERS:7: error: both `[` and `]` must be escaped with a `\`
 .github/CODEOWNERS:9: warning: `!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories
 ```
@@ -60,15 +62,15 @@ $ codeowners-stats --errors
 To fail CI when CODEOWNERS has dead rules:
 
 ```
-codeowners-stats --check --unused
+gh-codeowners --check --unused
 ```
 
 ## Library
 
 ```rust
-use codeowners_stats::codeowners::parse_codeowners;
-use codeowners_stats::count_tracked_files;
-use codeowners_stats::counter::Rule;
+use gh_codeowners::codeowners::parse_codeowners;
+use gh_codeowners::count_tracked_files;
+use gh_codeowners::counter::Rule;
 
 let rules: Vec<Rule> = parse_codeowners(&text)
     .into_iter()
@@ -90,7 +92,7 @@ There's no negation either. A `!` pattern without a slash matches file names lik
 
 Lines GitHub rejects as invalid own nothing, such as ones with an unescaped bracket, a `\` before anything but a space, tab, `#`, `[`, `]` or `\`, or `***`. So do a few lines GitHub accepts but never matches: a different number of `\[`s and `\]`s, and a pattern starting with `\[` that has no slash.
 
-Like on GitHub, a line is skipped if any owner isn't an `@user`, an `@org/team`, or an email address with a dot in its domain. Users and teams that don't exist don't make a line invalid. GitHub ignores a CODEOWNERS file over 3 MiB (its docs say 3 MB), so codeowners-stats reports an error for one.
+Like on GitHub, a line is skipped if any owner isn't an `@user`, an `@org/team`, or an email address with a dot in its domain. Users and teams that don't exist don't make a line invalid. GitHub ignores a CODEOWNERS file over 3 MiB (its docs say 3 MB), so `gh-codeowners` reports an error for one.
 
 These rules were checked against GitHub itself, by comparing which rule GitHub shows as owning each file in a test repository with thousands of random rules and paths.
 

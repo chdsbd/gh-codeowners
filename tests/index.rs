@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
-use codeowners_stats::count_tracked_files;
-use codeowners_stats::counter::Rule;
-use codeowners_stats::index::{Error, Index};
+use gh_codeowners::count_tracked_files;
+use gh_codeowners::counter::Rule;
+use gh_codeowners::index::{Error, Index};
 
 struct Repo(PathBuf);
 
@@ -37,7 +37,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn empty_repo(name: &str, init_args: &[&str]) -> Repo {
-    let dir = std::env::temp_dir().join(format!("codeowners-stats-{name}-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("gh-codeowners-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     git(&dir, &[&["init", "-q", "-b", "main"], init_args].concat());

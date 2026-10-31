@@ -1,4 +1,4 @@
-//! codeowners-stats as WebAssembly, for the VS Code extension on platforms
+//! gh-codeowners as WebAssembly, for the VS Code extension on platforms
 //! without the native CLI. WebAssembly can't read git's index or run git, so
 //! the caller lists the files.
 //!
@@ -10,12 +10,12 @@
 
 use std::cell::RefCell;
 
-use codeowners_stats::codeowners::{
+use gh_codeowners::codeowners::{
     CodeownersRule, MAX_CODEOWNERS_BYTES, find_problems, parse_codeowners,
 };
-use codeowners_stats::counter::{Rule, Rules, count};
-use codeowners_stats::owners_of;
-use codeowners_stats::report::{Json, Status, ownership_json, problem_json, rule_json};
+use gh_codeowners::counter::{Rule, Rules, count};
+use gh_codeowners::owners_of;
+use gh_codeowners::report::{Json, Status, ownership_json, problem_json, rule_json};
 
 thread_local! {
     static OUTPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };

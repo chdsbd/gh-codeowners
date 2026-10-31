@@ -1,11 +1,11 @@
-// For each case in a fixture, prints "<codeowners-stats> <codeowners-rs>":
+// For each case in a fixture, prints "<gh-codeowners> <codeowners-rs>":
 // 1 if the line owns the file, 0 if not, E if the line is rejected, P if the
 // library panics.
-use codeowners_stats::codeowners::parse_codeowners;
-use codeowners_stats::counter::{Rule, Rules, count};
-use codeowners_stats::pattern::can_match;
+use gh_codeowners::codeowners::parse_codeowners;
+use gh_codeowners::counter::{Rule, Rules, count};
+use gh_codeowners::pattern::can_match;
 
-fn codeowners_stats(line: &str, path: &str) -> &'static str {
+fn gh_codeowners(line: &str, path: &str) -> &'static str {
     let rules: Vec<Rule> = parse_codeowners(line)
         .into_iter()
         .map(|r| Rule {
@@ -47,7 +47,7 @@ fn main() {
     {
         let fields: Vec<&str> = case.split(" | ").collect();
         let (line, path) = (fields[0], fields[1]);
-        let ours = std::panic::catch_unwind(|| codeowners_stats(line, path)).unwrap_or("P");
+        let ours = std::panic::catch_unwind(|| gh_codeowners(line, path)).unwrap_or("P");
         let theirs = std::panic::catch_unwind(|| codeowners_rs(line, path)).unwrap_or("P");
         println!("{ours} {theirs}");
     }

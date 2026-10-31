@@ -24,21 +24,21 @@ dependencies = [
 ]
 
 [[package]]
-name = "codeowners-stats"
+name = "compare-rust"
+version = "0.0.0"
+dependencies = [
+ "codeowners-rs",
+ "gh-codeowners",
+]
+
+[[package]]
+name = "gh-codeowners"
 version = "0.1.0"
 dependencies = [
  "memchr",
  "memmap2",
  "regex",
  "rustc-hash",
-]
-
-[[package]]
-name = "compare-rust"
-version = "0.0.0"
-dependencies = [
- "codeowners-rs",
- "codeowners-stats",
 ]
 
 [[package]]

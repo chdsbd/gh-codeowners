@@ -2,15 +2,15 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use codeowners_stats::codeowners::{
+use gh_codeowners::codeowners::{
     CodeownersRule, LineProblem, MAX_CODEOWNERS_BYTES, find_codeowners, find_problems,
     parse_codeowners, repo_root_for_codeowners,
 };
-use codeowners_stats::counter::Rule;
-use codeowners_stats::report::{Json, Status, ownership_json, problem_json, rule_json};
-use codeowners_stats::{count_tracked_files, owners_of};
+use gh_codeowners::counter::Rule;
+use gh_codeowners::report::{Json, Status, ownership_json, problem_json, rule_json};
+use gh_codeowners::{count_tracked_files, owners_of};
 
-const USAGE: &str = "Usage: codeowners-stats [options] [root]
+const USAGE: &str = "Usage: gh-codeowners [options] [root]
 
 Count the files each CODEOWNERS rule owns, and find rules that own nothing.
 A file counts towards the last rule that matches it, like on GitHub.
@@ -214,7 +214,7 @@ fn rule_list(rules: &[CodeownersRule]) -> Vec<Rule> {
         .collect()
 }
 
-fn codeowners_stats(args: &Args, loaded: Loaded) -> Result<Stats, String> {
+fn stats_for(args: &Args, loaded: Loaded) -> Result<Stats, String> {
     check_size(&loaded)?;
     let display_path = display_path(&loaded);
     let Loaded {
@@ -467,7 +467,7 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         println!("{}", format_ownership(&loaded, &files, args.json));
         return Ok(ExitCode::SUCCESS);
     }
-    let stats = codeowners_stats(args, loaded)?;
+    let stats = stats_for(args, loaded)?;
     let rules: Vec<&RuleStats> = stats
         .rules
         .iter()
@@ -498,7 +498,7 @@ fn main() -> ExitCode {
         }
     };
     run(&args).unwrap_or_else(|message| {
-        eprintln!("codeowners-stats: {message}");
+        eprintln!("gh-codeowners: {message}");
         ExitCode::from(2)
     })
 }

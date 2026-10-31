@@ -1,8 +1,8 @@
 // Counts the same files repeatedly, for profiling:
 // cargo run --release --example bench_count <root> <rounds> [threads]
-use codeowners_stats::codeowners::parse_codeowners;
-use codeowners_stats::counter::{Rule, Rules, count};
-use codeowners_stats::index::Index;
+use gh_codeowners::codeowners::parse_codeowners;
+use gh_codeowners::counter::{Rule, Rules, count};
+use gh_codeowners::index::Index;
 use std::time::Instant;
 
 fn main() {

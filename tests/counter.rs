@@ -1,7 +1,7 @@
 // Checks the counter, which skips most rules for each path, against testing
 // every rule's regex against every file and directory.
-use codeowners_stats::counter::{Rule, Rules, count};
-use codeowners_stats::pattern::compile;
+use gh_codeowners::counter::{Rule, Rules, count};
+use gh_codeowners::pattern::compile;
 
 // mulberry32, so failures reproduce from the seed.
 struct Random(u32);

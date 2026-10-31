@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "codeowners-stats"
+name = "gh-codeowners"
 version = "0.1.0"
 dependencies = [
  "memchr",
@@ -22,10 +22,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "codeowners-stats-wasm"
+name = "gh-codeowners-wasm"
 version = "0.0.0"
 dependencies = [
- "codeowners-stats",
+ "gh-codeowners",
 ]
 
 [[package]]

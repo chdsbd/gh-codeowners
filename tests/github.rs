@@ -1,6 +1,6 @@
 // Checks every file ownership recorded from GitHub in tests/github.txt.
-use codeowners_stats::codeowners::parse_codeowners;
-use codeowners_stats::counter::{Rule, Rules, count};
+use gh_codeowners::codeowners::parse_codeowners;
+use gh_codeowners::counter::{Rule, Rules, count};
 
 fn owns(line: &str, path: &str) -> bool {
     let rules: Vec<Rule> = parse_codeowners(line)

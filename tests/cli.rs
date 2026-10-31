@@ -21,10 +21,7 @@ fn git(dir: &Path, args: &[&str]) {
 }
 
 fn repo(name: &str) -> Repo {
-    let dir = std::env::temp_dir().join(format!(
-        "codeowners-stats-cli-{name}-{}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(format!("gh-codeowners-cli-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     let write = |file: &str, text: &str| {
         let path = dir.join(file);
@@ -48,7 +45,7 @@ fn repo(name: &str) -> Repo {
 }
 
 fn run(repo: &Repo, args: &[&str]) -> (i32, String, String) {
-    let output = Command::new(env!("CARGO_BIN_EXE_codeowners-stats"))
+    let output = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
         .args(args)
         .current_dir(&repo.0)
         .output()
@@ -122,7 +119,7 @@ fn json_unused_lists_only_rules_that_own_nothing() {
 #[test]
 fn exits_with_2_when_theres_no_codeowners() {
     let empty =
-        std::env::temp_dir().join(format!("codeowners-stats-cli-empty-{}", std::process::id()));
+        std::env::temp_dir().join(format!("gh-codeowners-cli-empty-{}", std::process::id()));
     std::fs::create_dir_all(&empty).unwrap();
     let (status, _, stderr) = run(&repo("missing"), &[empty.to_str().unwrap()]);
     std::fs::remove_dir_all(&empty).unwrap();
@@ -130,7 +127,7 @@ fn exits_with_2_when_theres_no_codeowners() {
     assert_eq!(
         stderr,
         format!(
-            "codeowners-stats: No CODEOWNERS file found in {}\n",
+            "gh-codeowners: No CODEOWNERS file found in {}\n",
             empty.display()
         )
     );
@@ -161,7 +158,7 @@ fn rejects_codeowners_files_github_ignores_for_size() {
 
 fn run_with_stdin(repo: &Repo, args: &[&str], stdin: &str) -> (i32, String, String) {
     use std::io::Write as _;
-    let mut child = Command::new(env!("CARGO_BIN_EXE_codeowners-stats"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
         .args(args)
         .current_dir(&repo.0)
         .stdin(std::process::Stdio::piped())

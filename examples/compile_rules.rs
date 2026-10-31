@@ -1,7 +1,7 @@
 // Times turning every rule into a regex, which most rules skip:
 // cargo run --release --example compile_rules <CODEOWNERS>
-use codeowners_stats::codeowners::parse_codeowners;
-use codeowners_stats::pattern::{Matcher, compile};
+use gh_codeowners::codeowners::parse_codeowners;
+use gh_codeowners::pattern::{Matcher, compile};
 use std::time::Instant;
 
 fn main() {
