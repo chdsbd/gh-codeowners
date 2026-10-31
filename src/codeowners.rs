@@ -3,6 +3,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use crate::pattern;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeownersRule {
     pub pattern: String,
@@ -74,26 +76,73 @@ fn split_words(line: &str) -> Vec<String> {
     words
 }
 
+/// Each line's pattern and owners, skipping blank lines and comments.
+fn lines(text: &str) -> impl Iterator<Item = (usize, String, Vec<String>)> {
+    text.split('\n').enumerate().filter_map(|(lineno, line)| {
+        let mut words = split_words(line.strip_suffix('\r').unwrap_or(line)).into_iter();
+        let pattern = words.next()?;
+        Some((lineno, pattern, words.collect()))
+    })
+}
+
 /// Parse CODEOWNERS text into rules. Like GitHub, lines with an invalid
 /// owner are skipped.
 pub fn parse_codeowners(text: &str) -> Vec<CodeownersRule> {
-    let text = text.replace('\r', "");
-    let mut rules = Vec::new();
-    for (lineno, line) in text.split('\n').enumerate() {
-        let mut words = split_words(line).into_iter();
-        let Some(pattern) = words.next() else {
-            continue;
-        };
-        let owners: Vec<String> = words.collect();
-        if owners.iter().all(|owner| OWNER.is_match(owner)) {
-            rules.push(CodeownersRule {
-                pattern: pattern.to_string(),
-                owners,
-                lineno,
+    lines(text)
+        .filter(|(_, _, owners)| owners.iter().all(|owner| OWNER.is_match(owner)))
+        .map(|(lineno, pattern, owners)| CodeownersRule {
+            pattern,
+            owners,
+            lineno,
+        })
+        .collect()
+}
+
+/// Something wrong in a CODEOWNERS file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LineProblem {
+    /// Zero-based line number, or None for the whole file.
+    pub lineno: Option<usize>,
+    /// Whether GitHub skips the line, or ignores the file. Otherwise GitHub
+    /// accepts it, but it likely doesn't do what it looks like it does.
+    pub error: bool,
+    pub message: String,
+}
+
+/// Everything wrong in CODEOWNERS text: what GitHub's CODEOWNERS errors API
+/// reports, except owners that don't exist, which only GitHub can check, and
+/// patterns that GitHub accepts but that match nothing or don't negate.
+pub fn find_problems(text: &str) -> Vec<LineProblem> {
+    let mut problems = Vec::new();
+    if text.len() as u64 > MAX_CODEOWNERS_BYTES {
+        problems.push(LineProblem {
+            lineno: None,
+            error: true,
+            message: format!(
+                "GitHub ignores CODEOWNERS files over {MAX_CODEOWNERS_BYTES} bytes, and this one is {} bytes",
+                text.len()
+            ),
+        });
+    }
+    for (lineno, pattern, owners) in lines(text) {
+        if let Some(problem) = pattern::problem(&pattern) {
+            problems.push(LineProblem {
+                lineno: Some(lineno),
+                error: problem.invalid,
+                message: problem.message.to_string(),
+            });
+        }
+        for owner in owners.iter().filter(|owner| !OWNER.is_match(owner)) {
+            problems.push(LineProblem {
+                lineno: Some(lineno),
+                error: true,
+                message: format!(
+                    "`{owner}` isn't a valid owner - owners must be @user, @org/team or an email address"
+                ),
             });
         }
     }
-    rules
+    problems
 }
 
 #[cfg(test)]
@@ -177,6 +226,32 @@ mod tests {
                 "{owner}"
             );
         }
+    }
+
+    #[test]
+    fn finds_problems_on_each_line() {
+        let text = "# comment\n*.js @a\n[ab]x @a\n!foo @a\n/ @a\n*.md not-an-owner\n\\[a\n";
+        let summary: Vec<_> = find_problems(text)
+            .into_iter()
+            .map(|p| (p.lineno, p.error))
+            .collect();
+        assert_eq!(
+            summary,
+            [
+                (Some(2), true),
+                (Some(3), false),
+                (Some(4), false),
+                (Some(5), true),
+                (Some(6), false),
+            ]
+        );
+    }
+
+    #[test]
+    fn finds_codeowners_files_too_big_for_github() {
+        let text = "#".repeat(MAX_CODEOWNERS_BYTES as usize + 1);
+        assert_eq!(find_problems(&text)[0].lineno, None);
+        assert!(find_problems(&text[1..]).is_empty());
     }
 
     #[test]

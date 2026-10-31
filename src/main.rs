@@ -3,11 +3,11 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use codeowners_stats::codeowners::{
-    CodeownersRule, MAX_CODEOWNERS_BYTES, find_codeowners, parse_codeowners,
-    repo_root_for_codeowners,
+    CodeownersRule, LineProblem, MAX_CODEOWNERS_BYTES, find_codeowners, find_problems,
+    parse_codeowners, repo_root_for_codeowners,
 };
-use codeowners_stats::count_tracked_files;
 use codeowners_stats::counter::Rule;
+use codeowners_stats::{count_tracked_files, owners_of};
 
 const USAGE: &str = "Usage: codeowners-stats [options] [root]
 
@@ -18,9 +18,15 @@ Arguments:
   root                 Repository root (default: current directory)
 
 Options:
-  --codeowners <path>  CODEOWNERS file (default: the one GitHub would use)
+  --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one
+                       GitHub would use)
+  --owner-of <path>    Instead of counting, print the rule that owns a file,
+                       which needn't be tracked. Repeat for more files.
+  --errors             Instead of counting, list lines GitHub rejects, and
+                       lines that likely don't do what they look like
   --unused             Only list rules that own no files
-  --check              Exit with status 1 if any rule owns no files
+  --check              Exit with status 1 if any rule owns no files, or with
+                       --errors, if any line has an error
   --json               Print results as JSON
   -j, --threads <n>    Threads to count with (default: one per CPU)
   -h, --help           Show this help
@@ -62,6 +68,7 @@ struct RuleStats {
 
 struct Stats {
     codeowners: PathBuf,
+    display_path: String,
     root: PathBuf,
     files: usize,
     unowned: usize,
@@ -71,6 +78,8 @@ struct Stats {
 struct Args {
     root: Option<PathBuf>,
     codeowners: Option<PathBuf>,
+    owner_of: Vec<String>,
+    errors: bool,
     unused: bool,
     check: bool,
     json: bool,
@@ -86,6 +95,8 @@ fn parse_args(argv: Vec<String>) -> Result<Parsed, String> {
     let mut args = Args {
         root: None,
         codeowners: None,
+        owner_of: Vec::new(),
+        errors: false,
         unused: false,
         check: false,
         json: false,
@@ -107,6 +118,8 @@ fn parse_args(argv: Vec<String>) -> Result<Parsed, String> {
         };
         match name.as_str() {
             "--codeowners" => args.codeowners = Some(PathBuf::from(value("--codeowners")?)),
+            "--owner-of" => args.owner_of.push(value("--owner-of")?),
+            "--errors" => args.errors = true,
             "-j" | "--threads" => {
                 let n = value("--threads")?;
                 args.threads = Some(
@@ -134,6 +147,15 @@ fn parse_args(argv: Vec<String>) -> Result<Parsed, String> {
             _ => args.root = Some(PathBuf::from(arg)),
         }
     }
+    if args.errors && !args.owner_of.is_empty() {
+        return Err("Options '--errors' and '--owner-of' can't be used together".to_string());
+    }
+    if args.unused && (args.errors || !args.owner_of.is_empty()) {
+        return Err("Option '--unused' only applies when counting".to_string());
+    }
+    if args.check && !args.owner_of.is_empty() {
+        return Err("Option '--check' doesn't apply to '--owner-of'".to_string());
+    }
     Ok(Parsed::Run(args))
 }
 
@@ -141,14 +163,23 @@ fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-fn codeowners_stats(args: &Args) -> Result<Stats, String> {
+struct Loaded {
+    // "-" for stdin.
+    codeowners: PathBuf,
+    root: PathBuf,
+    text: String,
+}
+
+fn is_stdin(path: &Path) -> bool {
+    path == Path::new("-")
+}
+
+fn load(args: &Args) -> Result<Loaded, String> {
+    let current_dir = || std::env::current_dir().unwrap_or_default();
     let codeowners = match &args.codeowners {
         Some(path) => path.clone(),
         None => {
-            let root = args
-                .root
-                .clone()
-                .unwrap_or_else(|| std::env::current_dir().unwrap_or_default());
+            let root = args.root.clone().unwrap_or_else(current_dir);
             find_codeowners(&root)
                 .map(|path| {
                     path.strip_prefix(".")
@@ -158,33 +189,75 @@ fn codeowners_stats(args: &Args) -> Result<Stats, String> {
                 .ok_or_else(|| format!("No CODEOWNERS file found in {}", root.display()))?
         }
     };
-    let root = args
-        .root
-        .clone()
-        .unwrap_or_else(|| repo_root_for_codeowners(&absolute(&codeowners)));
-    let text = std::fs::read_to_string(&codeowners)
-        .map_err(|e| format!("{}: {e}", codeowners.display()))?;
-    if text.len() as u64 > MAX_CODEOWNERS_BYTES {
+    let root = match &args.root {
+        Some(root) => root.clone(),
+        None if is_stdin(&codeowners) => current_dir(),
+        None => repo_root_for_codeowners(&absolute(&codeowners)),
+    };
+    let text = if is_stdin(&codeowners) {
+        std::io::read_to_string(std::io::stdin()).map_err(|e| format!("stdin: {e}"))?
+    } else {
+        std::fs::read_to_string(&codeowners)
+            .map_err(|e| format!("{}: {e}", codeowners.display()))?
+    };
+    Ok(Loaded {
+        codeowners,
+        root,
+        text,
+    })
+}
+
+/// The CODEOWNERS file's path relative to the root, for messages.
+fn display_path(loaded: &Loaded) -> String {
+    if is_stdin(&loaded.codeowners) {
+        return "<stdin>".to_string();
+    }
+    let codeowners = absolute(&loaded.codeowners);
+    codeowners
+        .strip_prefix(absolute(&loaded.root))
+        .unwrap_or(&codeowners)
+        .display()
+        .to_string()
+}
+
+fn check_size(loaded: &Loaded) -> Result<(), String> {
+    if loaded.text.len() as u64 > MAX_CODEOWNERS_BYTES {
         return Err(format!(
             "{} is {} bytes, over GitHub's limit of {MAX_CODEOWNERS_BYTES}, so GitHub ignores it",
-            codeowners.display(),
-            text.len()
+            loaded.codeowners.display(),
+            loaded.text.len()
         ));
     }
-    let rules = parse_codeowners(&text);
-    let threads = args
-        .threads
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
-    let rule_list: Vec<Rule> = rules
+    Ok(())
+}
+
+fn rule_list(rules: &[CodeownersRule]) -> Vec<Rule> {
+    rules
         .iter()
         .map(|r| Rule {
             pattern: r.pattern.clone(),
             lineno: r.lineno,
         })
-        .collect();
-    let counts = count_tracked_files(&root, &rule_list, threads).map_err(|e| e.to_string())?;
+        .collect()
+}
+
+fn codeowners_stats(args: &Args, loaded: Loaded) -> Result<Stats, String> {
+    check_size(&loaded)?;
+    let display_path = display_path(&loaded);
+    let Loaded {
+        codeowners,
+        root,
+        text,
+    } = loaded;
+    let rules = parse_codeowners(&text);
+    let threads = args
+        .threads
+        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+    let counts =
+        count_tracked_files(&root, &rule_list(&rules), threads).map_err(|e| e.to_string())?;
     Ok(Stats {
         codeowners,
+        display_path,
         root,
         files: counts.files,
         unowned: counts.unowned,
@@ -216,13 +289,9 @@ fn format_text(stats: &Stats, rules: &[&RuleStats]) -> String {
         .iter()
         .filter(|r| r.status != Status::Active)
         .count();
-    let codeowners = absolute(&stats.codeowners);
-    let relative = codeowners
-        .strip_prefix(absolute(&stats.root))
-        .unwrap_or(&codeowners);
     let mut out = format!(
         "{}: {}, {}, {} with no owner, {} owning no files",
-        relative.display(),
+        stats.display_path,
         plural(stats.rules.len(), "rule"),
         plural(stats.files, "file"),
         plural(stats.unowned, "file"),
@@ -292,73 +361,258 @@ fn json_string(s: &str) -> String {
     out
 }
 
-// Same layout as JSON.stringify(value, null, 2).
-fn format_json(stats: &Stats, rules: &[&RuleStats]) -> String {
-    let mut out = String::from("{\n");
-    writeln!(
-        out,
-        "  \"codeowners\": {},",
-        json_string(&stats.codeowners.to_string_lossy())
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "  \"root\": {},",
-        json_string(&stats.root.to_string_lossy())
-    )
-    .unwrap();
-    writeln!(out, "  \"files\": {},", stats.files).unwrap();
-    writeln!(out, "  \"unowned\": {},", stats.unowned).unwrap();
-    if rules.is_empty() {
-        out.push_str("  \"rules\": []\n}");
-        return out;
-    }
-    out.push_str("  \"rules\": [\n");
-    for (i, r) in rules.iter().enumerate() {
-        out.push_str("    {\n");
-        writeln!(out, "      \"line\": {},", r.rule.lineno + 1).unwrap();
-        writeln!(out, "      \"pattern\": {},", json_string(&r.rule.pattern)).unwrap();
-        if r.rule.owners.is_empty() {
-            out.push_str("      \"owners\": [],\n");
-        } else {
-            out.push_str("      \"owners\": [\n");
-            let owners: Vec<String> = r
-                .rule
-                .owners
-                .iter()
-                .map(|o| format!("        {}", json_string(o)))
-                .collect();
-            out.push_str(&owners.join(",\n"));
-            out.push_str("\n      ],\n");
-        }
-        writeln!(out, "      \"files\": {},", r.files).unwrap();
-        writeln!(out, "      \"status\": \"{}\"", r.status.name()).unwrap();
-        out.push_str(if i + 1 == rules.len() {
-            "    }\n"
-        } else {
-            "    },\n"
-        });
-    }
-    out.push_str("  ]\n}");
-    out
+enum Json {
+    Null,
+    Number(usize),
+    String(String),
+    Array(Vec<Json>),
+    Object(Vec<(&'static str, Json)>),
 }
 
-fn main() -> ExitCode {
-    let args = match parse_args(std::env::args().skip(1).collect()) {
-        Ok(Parsed::Run(args)) => args,
-        Ok(Parsed::Exit(code)) => return code,
-        Err(message) => {
-            eprintln!("{message}\n\n{USAGE}");
-            return ExitCode::from(2);
+impl Json {
+    fn string(s: impl Into<String>) -> Json {
+        Json::String(s.into())
+    }
+
+    fn strings(items: &[String]) -> Json {
+        Json::Array(items.iter().map(|s| Json::string(s.as_str())).collect())
+    }
+
+    // Same layout as JSON.stringify(value, null, 2).
+    fn write(&self, out: &mut String, indent: usize) {
+        let pad = "  ".repeat(indent + 1);
+        match self {
+            Json::Null => out.push_str("null"),
+            Json::Number(n) => write!(out, "{n}").unwrap(),
+            Json::String(s) => out.push_str(&json_string(s)),
+            Json::Array(items) if items.is_empty() => out.push_str("[]"),
+            Json::Array(items) => {
+                out.push_str("[\n");
+                for (i, item) in items.iter().enumerate() {
+                    out.push_str(&pad);
+                    item.write(out, indent + 1);
+                    out.push_str(if i + 1 == items.len() { "\n" } else { ",\n" });
+                }
+                write!(out, "{}]", "  ".repeat(indent)).unwrap();
+            }
+            Json::Object(fields) if fields.is_empty() => out.push_str("{}"),
+            Json::Object(fields) => {
+                out.push_str("{\n");
+                for (i, (key, value)) in fields.iter().enumerate() {
+                    write!(out, "{pad}{}: ", json_string(key)).unwrap();
+                    value.write(out, indent + 1);
+                    out.push_str(if i + 1 == fields.len() { "\n" } else { ",\n" });
+                }
+                write!(out, "{}}}", "  ".repeat(indent)).unwrap();
+            }
         }
-    };
-    let stats = match codeowners_stats(&args) {
-        Ok(stats) => stats,
-        Err(message) => {
-            eprintln!("codeowners-stats: {message}");
-            return ExitCode::from(2);
+    }
+
+    fn format(&self) -> String {
+        let mut out = String::new();
+        self.write(&mut out, 0);
+        out
+    }
+}
+
+fn path_json(path: &Path) -> Json {
+    Json::string(path.to_string_lossy())
+}
+
+fn format_json(stats: &Stats, rules: &[&RuleStats]) -> String {
+    Json::Object(vec![
+        ("codeowners", path_json(&stats.codeowners)),
+        ("root", path_json(&stats.root)),
+        ("files", Json::Number(stats.files)),
+        ("unowned", Json::Number(stats.unowned)),
+        (
+            "rules",
+            Json::Array(
+                rules
+                    .iter()
+                    .map(|r| {
+                        Json::Object(vec![
+                            ("line", Json::Number(r.rule.lineno + 1)),
+                            ("pattern", Json::string(r.rule.pattern.as_str())),
+                            ("owners", Json::strings(&r.rule.owners)),
+                            ("files", Json::Number(r.files)),
+                            ("status", Json::string(r.status.name())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ),
+    ])
+    .format()
+}
+
+/// `path` relative to `root`, with `/` separators. Relative paths are
+/// already relative to the root.
+fn repo_path(root: &Path, path: &str) -> Result<String, String> {
+    let given = Path::new(path);
+    let relative = if given.is_absolute() {
+        match given.strip_prefix(absolute(root)) {
+            Ok(relative) => relative.to_path_buf(),
+            // One of the paths may go through a symlink, like /var on macOS.
+            Err(_) => real_path(given)
+                .zip(std::fs::canonicalize(root).ok())
+                .and_then(|(given, root)| given.strip_prefix(root).ok().map(Path::to_path_buf))
+                .ok_or_else(|| format!("{path} isn't in {}", root.display()))?,
         }
+    } else {
+        given.to_path_buf()
     };
+    let mut relative = relative.to_string_lossy().into_owned();
+    if cfg!(windows) {
+        relative = relative.replace('\\', "/");
+    }
+    Ok(relative.trim_start_matches("./").to_string())
+}
+
+/// `path` with symlinks resolved, even if the file doesn't exist yet.
+fn real_path(path: &Path) -> Option<PathBuf> {
+    std::fs::canonicalize(path)
+        .ok()
+        .or_else(|| Some(real_path(path.parent()?)?.join(path.file_name()?)))
+}
+
+/// Each `--owner-of` path, and the rule that owns it.
+fn ownership(
+    args: &Args,
+    loaded: &Loaded,
+) -> Result<Vec<(String, Option<CodeownersRule>)>, String> {
+    check_size(loaded)?;
+    let rules = parse_codeowners(&loaded.text);
+    let paths = args
+        .owner_of
+        .iter()
+        .map(|path| repo_path(&loaded.root, path))
+        .collect::<Result<Vec<_>, _>>()?;
+    let owners = owners_of(&rule_list(&rules), &paths);
+    Ok(paths
+        .into_iter()
+        .zip(owners)
+        .map(|(path, rule)| (path, rule.map(|i| rules[i].clone())))
+        .collect())
+}
+
+fn format_ownership(
+    loaded: &Loaded,
+    files: &[(String, Option<CodeownersRule>)],
+    json: bool,
+) -> String {
+    if json {
+        return Json::Object(vec![
+            ("codeowners", path_json(&loaded.codeowners)),
+            ("root", path_json(&loaded.root)),
+            (
+                "files",
+                Json::Array(
+                    files
+                        .iter()
+                        .map(|(path, rule)| {
+                            Json::Object(vec![
+                                ("path", Json::string(path.as_str())),
+                                (
+                                    "line",
+                                    rule.as_ref()
+                                        .map_or(Json::Null, |r| Json::Number(r.lineno + 1)),
+                                ),
+                                (
+                                    "pattern",
+                                    rule.as_ref()
+                                        .map_or(Json::Null, |r| Json::string(r.pattern.as_str())),
+                                ),
+                                (
+                                    "owners",
+                                    rule.as_ref().map_or(Json::Array(Vec::new()), |r| {
+                                        Json::strings(&r.owners)
+                                    }),
+                                ),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ])
+        .format();
+    }
+    let display = display_path(loaded);
+    let lines: Vec<String> = files
+        .iter()
+        .map(|(path, rule)| match rule {
+            None => format!("{path}: no rule in {display} matches"),
+            Some(rule) if rule.owners.is_empty() => format!(
+                "{path}: no owners, from {display}:{} {}",
+                rule.lineno + 1,
+                rule.pattern
+            ),
+            Some(rule) => format!(
+                "{path}: {}, from {display}:{} {}",
+                rule.owners.join(" "),
+                rule.lineno + 1,
+                rule.pattern
+            ),
+        })
+        .collect();
+    lines.join("\n")
+}
+
+fn format_problems(loaded: &Loaded, problems: &[LineProblem], json: bool) -> String {
+    let severity = |p: &LineProblem| if p.error { "error" } else { "warning" };
+    if json {
+        return Json::Object(vec![
+            ("codeowners", path_json(&loaded.codeowners)),
+            (
+                "problems",
+                Json::Array(
+                    problems
+                        .iter()
+                        .map(|p| {
+                            Json::Object(vec![
+                                ("line", p.lineno.map_or(Json::Null, |n| Json::Number(n + 1))),
+                                ("severity", Json::string(severity(p))),
+                                ("message", Json::string(p.message.as_str())),
+                            ])
+                        })
+                        .collect(),
+                ),
+            ),
+        ])
+        .format();
+    }
+    let display = display_path(loaded);
+    if problems.is_empty() {
+        return format!("{display}: no problems");
+    }
+    let lines: Vec<String> = problems
+        .iter()
+        .map(|p| match p.lineno {
+            Some(n) => format!("{display}:{}: {}: {}", n + 1, severity(p), p.message),
+            None => format!("{display}: {}: {}", severity(p), p.message),
+        })
+        .collect();
+    lines.join("\n")
+}
+
+fn run(args: &Args) -> Result<ExitCode, String> {
+    let loaded = load(args)?;
+    if args.errors {
+        let problems = find_problems(&loaded.text);
+        println!("{}", format_problems(&loaded, &problems, args.json));
+        let failed = args.check && problems.iter().any(|p| p.error);
+        return Ok(if failed {
+            ExitCode::from(1)
+        } else {
+            ExitCode::SUCCESS
+        });
+    }
+    if !args.owner_of.is_empty() {
+        let files = ownership(args, &loaded)?;
+        println!("{}", format_ownership(&loaded, &files, args.json));
+        return Ok(ExitCode::SUCCESS);
+    }
+    let stats = codeowners_stats(args, loaded)?;
     let rules: Vec<&RuleStats> = stats
         .rules
         .iter()
@@ -373,8 +627,23 @@ fn main() -> ExitCode {
         }
     );
     if args.check && stats.rules.iter().any(|r| r.status != Status::Active) {
-        ExitCode::from(1)
+        Ok(ExitCode::from(1))
     } else {
-        ExitCode::SUCCESS
+        Ok(ExitCode::SUCCESS)
     }
+}
+
+fn main() -> ExitCode {
+    let args = match parse_args(std::env::args().skip(1).collect()) {
+        Ok(Parsed::Run(args)) => args,
+        Ok(Parsed::Exit(code)) => return code,
+        Err(message) => {
+            eprintln!("{message}\n\n{USAGE}");
+            return ExitCode::from(2);
+        }
+    };
+    run(&args).unwrap_or_else(|message| {
+        eprintln!("codeowners-stats: {message}");
+        ExitCode::from(2)
+    })
 }

@@ -22,39 +22,97 @@ pub fn is_dir_only(pattern: &str) -> bool {
     pattern.ends_with('/') && trimmed != "**" && !trimmed.ends_with("/**")
 }
 
+/// Something wrong with a pattern.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Problem {
+    /// Whether GitHub rejects the pattern, which its CODEOWNERS errors API
+    /// reports. Otherwise GitHub accepts it, but it likely doesn't do what
+    /// it looks like it does.
+    pub invalid: bool,
+    /// Whether the pattern matches nothing on GitHub.
+    pub matches_nothing: bool,
+    pub message: &'static str,
+}
+
+impl Problem {
+    fn invalid(message: &'static str) -> Problem {
+        Problem {
+            invalid: true,
+            matches_nothing: true,
+            message,
+        }
+    }
+
+    fn matches_nothing(message: &'static str) -> Problem {
+        Problem {
+            invalid: false,
+            matches_nothing: true,
+            message,
+        }
+    }
+}
+
+/// What's wrong with `pattern`, if anything. The messages for invalid
+/// patterns follow GitHub's.
+pub fn problem(pattern: &str) -> Option<Problem> {
+    if let Some(message) = invalid_reason(pattern) {
+        return Some(Problem::invalid(message));
+    }
+    let name = negated_name(pattern);
+    let pattern = name.unwrap_or(pattern);
+    if pattern.trim_matches('/').is_empty() {
+        return Some(Problem::matches_nothing(
+            "the pattern will never match any files - did you mean `*` instead?",
+        ));
+    }
+    if !brackets_pair_up(pattern) {
+        return Some(Problem::matches_nothing(
+            "GitHub matches nothing when a pattern has a different number of `\\[`s and `\\]`s",
+        ));
+    }
+    if pattern.starts_with("\\[") && !pattern.contains('/') {
+        return Some(Problem::matches_nothing(
+            "GitHub matches nothing for a pattern starting with `\\[` and without a slash - did you mean to start it with `**/`?",
+        ));
+    }
+    if name.is_some() {
+        return Some(Problem {
+            invalid: false,
+            matches_nothing: false,
+            message: "`!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories",
+        });
+    }
+    None
+}
+
 /// Whether `pattern` can match a path. Blank lines, comments and patterns
 /// GitHub rejects as invalid can't, nor can a few that GitHub accepts but
 /// never matches.
 pub fn can_match(pattern: &str) -> bool {
-    let pattern = negated_name(pattern).unwrap_or(pattern);
-    !(pattern.trim().is_empty()
-        || pattern.starts_with('#')
-        || pattern.trim_matches('/').is_empty())
-        && is_valid(pattern)
-        && brackets_pair_up(pattern)
-        // On GitHub, a pattern starting with `\[` matches nothing unless it
-        // has a slash.
-        && !(pattern.starts_with("\\[") && !pattern.contains('/'))
+    !(pattern.trim().is_empty() || pattern.starts_with('#'))
+        && problem(pattern).is_none_or(|p| !p.matches_nothing)
 }
 
-/// Whether GitHub accepts `pattern`, which its CODEOWNERS errors API checks:
-/// `[` and `]` must be escaped, `\` can only escape a space, tab, `#`, `[`,
-/// `]` or `\`, and there can't be more than two `*`s in a row.
-fn is_valid(pattern: &str) -> bool {
+/// Why GitHub rejects `pattern`, if it does: `[` and `]` must be escaped,
+/// `\` can only escape a space, tab, `#`, `[`, `]` or `\`, and there can't be
+/// more than two `*`s in a row.
+fn invalid_reason(pattern: &str) -> Option<&'static str> {
     let mut stars = 0;
     let mut chars = pattern.chars();
     while let Some(c) = chars.next() {
         stars = if c == '*' { stars + 1 } else { 0 };
         match c {
             '\\' if !matches!(chars.next(), Some(' ' | '\t' | '#' | '[' | ']' | '\\')) => {
-                return false;
+                return Some(
+                    "all `\\` characters must be escaped with another `\\` unless escaping: tab, space, #, [, ]",
+                );
             }
-            '[' | ']' => return false,
-            _ if stars > 2 => return false,
+            '[' | ']' => return Some("both `[` and `]` must be escaped with a `\\`"),
+            _ if stars > 2 => return Some("did you mean `**` instead?"),
             _ => {}
         }
     }
-    true
+    None
 }
 
 /// Whether there are as many `\[`s as `\]`s, in any order. GitHub matches

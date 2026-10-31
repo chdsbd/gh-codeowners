@@ -1,6 +1,6 @@
-//! Count the files each CODEOWNERS rule owns, and find rules that own
-//! nothing. A Rust port of the codeowners-stats npm package, giving the same
-//! counts with lower wall time on large repositories.
+//! Count the files each CODEOWNERS rule owns, find rules that own nothing,
+//! find which rule owns a file, and find mistakes in CODEOWNERS, all matching
+//! like GitHub.
 
 pub mod codeowners;
 pub mod counter;
@@ -71,6 +71,22 @@ fn count_index(
         (counts, parsing.join().unwrap())
     });
     Ok(parsed?.then_some(counts))
+}
+
+/// For each path, the index in `rules` of the rule that owns it: the last
+/// one matching the path or a directory containing it. Paths needn't be in
+/// git's index.
+pub fn owners_of<P: AsRef<[u8]>>(rules: &[Rule], paths: &[P]) -> Vec<Option<usize>> {
+    let compiled = Rules::new(rules);
+    paths
+        .iter()
+        .map(|path| {
+            count(&compiled, &[path.as_ref()], 1)
+                .rules
+                .iter()
+                .position(|rule| rule.owned == 1)
+        })
+        .collect()
 }
 
 fn count_ls_files(root: &Path, rules: &Rules, threads: usize) -> Result<Counts, Error> {

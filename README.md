@@ -29,11 +29,32 @@ cargo install --git https://github.com/chdsbd/codeowners-stats
 ```
 codeowners-stats [options] [root]
 
-  --codeowners <path>  CODEOWNERS file (default: the one GitHub would use)
+  --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one
+                       GitHub would use)
+  --owner-of <path>    Instead of counting, print the rule that owns a file,
+                       which needn't be tracked. Repeat for more files.
+  --errors             Instead of counting, list lines GitHub rejects, and
+                       lines that likely don't do what they look like
   --unused             Only list rules that own no files
-  --check              Exit with status 1 if any rule owns no files
+  --check              Exit with status 1 if any rule owns no files, or with
+                       --errors, if any line has an error
   --json               Print results as JSON
   -j, --threads <n>    Threads to count with (default: one per CPU)
+```
+
+To find who owns a file, like GitHub shows when you hover over its code owners icon:
+
+```
+$ codeowners-stats --owner-of src/app.ts
+src/app.ts: @acme/web, from .github/CODEOWNERS:5 /src/
+```
+
+To check CODEOWNERS for mistakes, including lines GitHub accepts but that never match:
+
+```
+$ codeowners-stats --errors
+.github/CODEOWNERS:7: error: both `[` and `]` must be escaped with a `\`
+.github/CODEOWNERS:9: warning: `!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories
 ```
 
 To fail CI when CODEOWNERS has dead rules:
