@@ -57,22 +57,21 @@ fn is_valid(pattern: &str) -> bool {
     true
 }
 
-/// Whether each `\[` is closed by a `\]` before the next `\[`. GitHub
-/// matches nothing otherwise.
+/// Whether there are as many `\[`s as `\]`s, in any order. GitHub matches
+/// nothing otherwise.
 fn brackets_pair_up(pattern: &str) -> bool {
-    let mut open = false;
+    let mut balance = 0i32;
     let mut chars = pattern.chars();
     while let Some(c) = chars.next() {
         if c == '\\' {
             match chars.next() {
-                Some('[') if !open => open = true,
-                Some(']') if open => open = false,
-                Some('[' | ']') => return false,
+                Some('[') => balance += 1,
+                Some(']') => balance -= 1,
                 _ => {}
             }
         }
     }
-    !open
+    balance == 0
 }
 
 /// Whether `pattern` is relative to the root: it has a leading or middle
@@ -417,10 +416,26 @@ mod tests {
     #[test]
     fn matches_nothing_where_github_matches_nothing() {
         // From a test repository on GitHub.
-        for pattern in ["\\[ab\\]x", "\\[ab\\]*.js", "a\\[b"] {
+        for pattern in [
+            "\\[ab\\]x",
+            "\\[ab\\]*.js",
+            "a\\[b",
+            "a\\]b",
+            "/a\\]b",
+            "/x\\]\\[y\\]",
+            "a\\[b\\]c\\]d",
+        ] {
             assert!(compile(pattern).is_none(), "{pattern}");
         }
-        for pattern in ["\\[ab\\]x/", "/\\[ab\\]x", "**/\\[ab\\]x", "x\\[ab\\]"] {
+        for pattern in [
+            "\\[ab\\]x/",
+            "/\\[ab\\]x",
+            "**/\\[ab\\]x",
+            "x\\[ab\\]",
+            // Only the counts matter, not the order.
+            "x\\]\\[y",
+            "a\\]b/c\\[d",
+        ] {
             assert!(compile(pattern).is_some(), "{pattern}");
         }
     }
