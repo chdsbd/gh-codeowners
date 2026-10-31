@@ -39,6 +39,9 @@ fn random_pattern(random: &mut Random) -> String {
     if random.next().is_multiple_of(4) {
         pattern.push('/');
     }
+    if random.next().is_multiple_of(8) {
+        pattern.insert(0, '!');
+    }
     pattern
 }
 

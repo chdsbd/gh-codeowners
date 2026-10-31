@@ -1,22 +1,32 @@
 //! Turns a CODEOWNERS pattern into a regex, the way GitHub matches them:
 //! gitignore rules, except that paths are case-sensitive, there are no
-//! character classes, and a leading `!` is ignored rather than negating.
-//! Unlike gitignore, a pattern ending in `/*` doesn't match nested files.
+//! character classes, and `!` doesn't negate. Unlike gitignore, a pattern
+//! ending in `/*` doesn't match nested files, and one ending in `/**/` isn't
+//! limited to directories.
 //! Where GitHub's behavior differs from its docs, this follows what GitHub
 //! does, as checked against a test repository.
 
 use std::sync::OnceLock;
 
-/// GitHub doesn't support negation, and matches `!foo` like `foo`.
-pub fn strip_negation(pattern: &str) -> &str {
-    pattern.strip_prefix('!').unwrap_or(pattern)
+/// For a `!` pattern without a slash, the rest of the pattern. GitHub
+/// doesn't negate these, but matches file names like the rest would, and
+/// not directories. With a slash, `!` is an ordinary character.
+fn negated_name(pattern: &str) -> Option<&str> {
+    pattern.strip_prefix('!').filter(|rest| !rest.contains('/'))
+}
+
+/// Whether a pattern only matches directories: it ends in `/`, but not
+/// `/**/`, which GitHub matches like `/**`.
+pub fn is_dir_only(pattern: &str) -> bool {
+    let trimmed = pattern.trim_end_matches('/');
+    pattern.ends_with('/') && trimmed != "**" && !trimmed.ends_with("/**")
 }
 
 /// Whether `pattern` can match a path. Blank lines, comments and patterns
 /// GitHub rejects as invalid can't, nor can a few that GitHub accepts but
 /// never matches.
 pub fn can_match(pattern: &str) -> bool {
-    let pattern = strip_negation(pattern);
+    let pattern = negated_name(pattern).unwrap_or(pattern);
     !(pattern.trim().is_empty()
         || pattern.starts_with('#')
         || pattern.trim_matches('/').is_empty())
@@ -71,8 +81,9 @@ fn is_anchored(pattern: &str) -> bool {
     pattern.strip_suffix('/').unwrap_or(pattern).contains('/')
 }
 
-/// Append the regex for one path segment, without slashes.
-fn push_segment(out: &mut String, segment: &str) {
+/// Append the regex for one path segment, without slashes. With
+/// `raw_brackets`, `\\[` and `\\]` match a backslash and a bracket.
+fn push_segment(out: &mut String, segment: &str, raw_brackets: bool) {
     // A segment of only `*`s names something, so it can't be empty.
     if segment.bytes().all(|c| c == b'*') {
         out.push_str("[^/]+");
@@ -86,6 +97,9 @@ fn push_segment(out: &mut String, segment: &str) {
             '?' => out.push_str("[^/]"),
             '\\' => {
                 if let Some(escaped) = chars.next() {
+                    if raw_brackets && matches!(escaped, '[' | ']') {
+                        push_literal(out, '\\');
+                    }
                     push_literal(out, escaped);
                 }
             }
@@ -111,14 +125,29 @@ pub fn regex_source(pattern: &str) -> Option<String> {
     if !can_match(pattern) {
         return None;
     }
-    let pattern = strip_negation(pattern);
-    let dir_only = pattern.ends_with('/');
+    let (pattern, files_only) = match negated_name(pattern) {
+        Some(rest) => (rest, true),
+        None => (pattern, false),
+    };
+    let unescaped = pattern_regex(pattern, files_only, false);
+    // GitHub matches escaped brackets either way, but not a mix of the two.
+    Some(if pattern.contains("\\[") {
+        let raw = pattern_regex(pattern, files_only, true);
+        format!("(?s-u)(?:{unescaped})|(?:{raw})")
+    } else {
+        format!("(?s-u){unescaped}")
+    })
+}
+
+/// With `files_only`, the regex doesn't match directories.
+fn pattern_regex(pattern: &str, files_only: bool, raw_brackets: bool) -> String {
+    let dir_only = is_dir_only(pattern);
     let trimmed = pattern.strip_suffix('/').unwrap_or(pattern);
     let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
     let mut out = String::from(if is_anchored(pattern) {
-        "(?s-u)^"
+        "^"
     } else {
-        "(?s-u)^(?:.*/)?"
+        "^(?:.*/)?"
     });
     let segments: Vec<&str> = trimmed.split('/').collect();
     for (i, segment) in segments.iter().enumerate() {
@@ -128,26 +157,26 @@ pub fn regex_source(pattern: &str) -> Option<String> {
             // middle `**/` zero or more directories.
             if last {
                 out.push_str(if dir_only { ".+/$" } else { ".+" });
-                return Some(out);
+                return out;
             }
             out.push_str("(?:.*/)?");
             continue;
         }
-        push_segment(&mut out, segment);
+        push_segment(&mut out, segment, raw_brackets);
         if !last {
             out.push('/');
         }
     }
     if dir_only {
         out.push_str("/$");
-    } else if pattern.ends_with("/*") {
+    } else if files_only || pattern.ends_with("/*") {
         // GitHub doesn't match nested files for rules ending in `/*`.
         out.push('$');
     } else {
         // The path, or a directory containing it.
         out.push_str("/?$");
     }
-    Some(out)
+    out
 }
 
 /// Compile `pattern` for the `regex` crate.
@@ -187,7 +216,12 @@ impl Matcher {
         if !can_match(pattern) {
             return Matcher::Never;
         }
-        let pattern = strip_negation(pattern);
+        if negated_name(pattern).is_some() {
+            return Matcher::Regex {
+                pattern: pattern.to_string(),
+                regex: OnceLock::new(),
+            };
+        }
         if pattern == "*" {
             return Matcher::Always;
         }
@@ -197,7 +231,7 @@ impl Matcher {
                 regex: OnceLock::new(),
             };
         }
-        let dir_only = pattern.ends_with('/');
+        let dir_only = is_dir_only(pattern);
         let trimmed = pattern.strip_suffix('/').unwrap_or(pattern);
         if is_anchored(pattern) {
             let path = trimmed.strip_prefix('/').unwrap_or(trimmed);
@@ -284,6 +318,10 @@ mod tests {
         assert!(matches("x\\[a-c\\]", "d/x[a-c]"));
         assert!(!matches("x\\[a-c\\]", "xb"));
         assert!(matches("/app/\\[id\\]/", "app/[id]/"));
+        // From a test repository on GitHub.
+        assert!(matches("/app/\\[id\\]/", "app/\\[id\\]/"));
+        assert!(!matches("/app/\\[id\\]/", "app/\\[id]/"));
+        assert!(!matches("/app/\\[id\\]/", "app/[id\\]/"));
     }
 
     #[test]
@@ -335,9 +373,45 @@ mod tests {
     }
 
     #[test]
-    fn ignores_negation() {
-        assert!(matches("!foo", "x/foo"));
-        assert!(!matches("!foo", "!foo"));
+    fn matches_negations_like_github() {
+        // From a test repository on GitHub.
+        for (pattern, path, expected) in [
+            ("!foo", "foo", true),
+            ("!foo", "x/foo", true),
+            ("!foo", "!foo", false),
+            ("!foo", "foo/", false),
+            ("!*.md", "x/a.md", true),
+            ("!*.md", "a.md/", false),
+            ("!*", "a/b", true),
+            ("!f?o", "foo", true),
+            // With a slash, `!` is literal.
+            ("!a/", "y/!a/", true),
+            ("!a/", "a/", false),
+            ("!a/b", "!a/b", true),
+            ("!a/b", "y/!a/b", false),
+            ("!/foo", "!/foo", true),
+            ("!/foo", "foo", false),
+            ("!*/x", "!/x", true),
+            ("!**/foo", "!x/foo", true),
+            ("!**/foo", "x/foo", false),
+        ] {
+            assert_eq!(matches(pattern, path), expected, "{pattern} {path}");
+        }
+    }
+
+    #[test]
+    fn matches_trailing_double_star_slash_like_double_star() {
+        // From a test repository on GitHub.
+        for (pattern, path, expected) in [
+            ("**/", "x", true),
+            ("/**/", "x", true),
+            ("a/**/", "a/x", true),
+            ("a/**/", "b/c", false),
+            ("**/a/", "a/", true),
+            ("**/a/", "a", false),
+        ] {
+            assert_eq!(matches(pattern, path), expected, "{pattern} {path}");
+        }
     }
 
     #[test]

@@ -63,6 +63,10 @@ for rule in &counts.rules {
 
 ## Matching
 
-Patterns are matched like on GitHub: by [gitignore rules](https://git-scm.com/docs/gitignore#_pattern_format), with [GitHub's exceptions](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-syntax). Paths are case-sensitive, a pattern ending in `/*` doesn't match files in subdirectories, and `?` matches one byte, so `??` matches `é`. There's no negation: GitHub ignores a leading `!`, so `!foo` matches like `foo`. There are no character ranges either: `[` and `]` must be escaped as `\[` and `\]`.
+Patterns are matched like on GitHub: by [gitignore rules](https://git-scm.com/docs/gitignore#_pattern_format), with [GitHub's exceptions](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-syntax). Paths are case-sensitive, a pattern ending in `/*` doesn't match files in subdirectories, one ending in `/**/` matches files too, and `?` matches one byte, so `??` matches `é`. There are no character ranges: `[` and `]` must be escaped as `\[` and `\]`.
+
+There's no negation either. A `!` pattern without a slash matches file names like the pattern without the `!` would, but not directories, so `!foo` owns `x/foo` but not `foo/bar`. In a pattern with a slash, `!` is an ordinary character, so `!a/` owns `!a/b`.
 
 Lines GitHub rejects as invalid own nothing, such as ones with an unescaped bracket, a `\` before anything but a space, tab, `#`, `[`, `]` or `\`, or `***`. So do a few lines GitHub accepts but never matches: an unpaired `\[` or `\]`, and a pattern starting with `\[` that has no slash.
+
+These rules were checked against GitHub itself, by comparing which rule GitHub shows as owning each file in a test repository with thousands of random rules and paths.

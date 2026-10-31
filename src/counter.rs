@@ -57,10 +57,11 @@ impl CompiledRule {
 }
 
 fn compile_rule(pattern: &str) -> CompiledRule {
-    let pattern = pattern::strip_negation(pattern);
+    // Without a slash, a `!` pattern only matches files, so it's not a
+    // suffix rule. The `!` keeps it out of the suffix index.
     CompiledRule {
         matcher: pattern::Matcher::new(pattern),
-        dir_only: pattern.ends_with('/'),
+        dir_only: pattern::is_dir_only(pattern),
         prefix: literal_prefix(pattern),
         suffix: SUFFIX
             .captures(pattern.as_bytes())
