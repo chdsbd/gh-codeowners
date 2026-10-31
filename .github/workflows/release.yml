@@ -1,0 +1,103 @@
+name: Release
+
+# Pushing a tag like v0.1.0 publishes a release with a binary for each
+# platform, named so `gh extension install chdsbd/gh-codeowners` finds them:
+# gh-codeowners-<GOOS>-<GOARCH>, with .exe on Windows.
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions: {}
+
+jobs:
+  # gh installs from the latest published release, so start with a draft and
+  # publish it once every binary is attached.
+  draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Check the tag matches Cargo.toml
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          if [[ "v$version" != "$GITHUB_REF_NAME" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in Cargo.toml"
+            exit 1
+          fi
+      - run: gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+  build:
+    needs: draft
+    strategy:
+      matrix:
+        include:
+          # Linux builds use musl, so one static binary runs everywhere.
+          - {
+              platform: darwin-arm64,
+              os: macos-latest,
+              target: aarch64-apple-darwin,
+            }
+          - {
+              platform: darwin-amd64,
+              os: macos-latest,
+              target: x86_64-apple-darwin,
+            }
+          - {
+              platform: linux-amd64,
+              os: ubuntu-latest,
+              target: x86_64-unknown-linux-musl,
+            }
+          - {
+              platform: linux-arm64,
+              os: ubuntu-24.04-arm,
+              target: aarch64-unknown-linux-musl,
+            }
+          - {
+              platform: windows-amd64,
+              os: windows-latest,
+              target: x86_64-pc-windows-msvc,
+              exe: .exe,
+            }
+          - {
+              platform: windows-arm64,
+              os: windows-latest,
+              target: aarch64-pc-windows-msvc,
+              exe: .exe,
+            }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+          PLATFORM: ${{ matrix.platform }}
+          EXE: ${{ matrix.exe }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          rustup toolchain install stable --profile minimal --target "$TARGET"
+          if [[ "$TARGET" == *musl ]]; then sudo apt-get install -y musl-tools; fi
+          cargo build --release --locked --target "$TARGET"
+          asset="gh-codeowners-$PLATFORM$EXE"
+          cp "target/$TARGET/release/gh-codeowners$EXE" "$asset"
+          gh release upload "$GITHUB_REF_NAME" "$asset"
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

@@ -20,21 +20,31 @@ Files are the ones in git's index: tracked files, which are what GitHub sees onc
 
 ## Install
 
+As a [GitHub CLI](https://cli.github.com) extension, which downloads a prebuilt binary:
+
+```
+gh extension install chdsbd/gh-codeowners
+gh codeowners
+```
+
+Or with Cargo, which installs the `gh-codeowners` command:
+
 ```
 cargo install --git https://github.com/chdsbd/gh-codeowners
 ```
-
-This installs the `gh-codeowners` command.
 
 ## CLI
 
 ```
 gh-codeowners [options] [root]
 
+  root                 Repository root (default: the git repository
+                       containing the current directory)
   --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one
                        GitHub would use)
   --owner-of <path>    Instead of counting, print the rule that owns a file,
-                       which needn't be tracked. Repeat for more files.
+                       which needn't be tracked. Relative paths are relative
+                       to the current directory. Repeat for more files.
   --errors             Instead of counting, list lines GitHub rejects, and
                        lines that likely don't do what they look like
   --unused             Only list rules that own no files
@@ -44,11 +54,13 @@ gh-codeowners [options] [root]
   -j, --threads <n>    Threads to count with (default: one per CPU)
 ```
 
-To find who owns a file, like GitHub shows when you hover over its code owners icon:
+It works from any directory in the repository. To find who owns a file, like GitHub shows when you hover over its code owners icon, or a directory:
 
 ```
-$ gh-codeowners --owner-of src/app.ts
+$ cd src
+$ gh-codeowners --owner-of app.ts --owner-of components
 src/app.ts: @acme/web, from .github/CODEOWNERS:5 /src/
+src/components/: @acme/design, from .github/CODEOWNERS:6 /src/components/
 ```
 
 To check CODEOWNERS for mistakes, including lines GitHub accepts but that never match:
@@ -103,6 +115,17 @@ These rules were checked against GitHub itself, by comparing which rule GitHub s
 ```
 cargo build --release --target wasm32-unknown-unknown --manifest-path wasm/Cargo.toml
 ```
+
+## Releasing
+
+Bump the version in `Cargo.toml`, then push a matching tag:
+
+```
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+[`release.yml`](.github/workflows/release.yml) builds a binary for each platform and attaches it to a GitHub release, named like `gh-codeowners-darwin-arm64`, which is how `gh extension install` finds it.
 
 ## Testing
 

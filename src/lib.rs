@@ -76,16 +76,28 @@ fn count_index(
 
 /// For each path, the index in `rules` of the rule that owns it: the last
 /// one matching the path or a directory containing it. Paths needn't be in
-/// git's index.
+/// git's index, and a path ending in `/` is a directory.
 pub fn owners_of<P: AsRef<[u8]>>(rules: &[Rule], paths: &[P]) -> Vec<Option<usize>> {
-    let compiled = Rules::new(rules);
+    let matchers: Vec<pattern::Matcher> = rules
+        .iter()
+        .map(|rule| pattern::Matcher::new(&rule.pattern))
+        .collect();
     paths
         .iter()
         .map(|path| {
-            count(&compiled, &[path.as_ref()], 1)
-                .rules
+            let path = path.as_ref();
+            // The path, and each directory containing it, with a trailing
+            // slash, as matchers expect directories.
+            let mut candidates: Vec<&[u8]> = path
                 .iter()
-                .position(|rule| rule.owned == 1)
+                .enumerate()
+                .filter(|&(i, &b)| b == b'/' && i + 1 < path.len())
+                .map(|(i, _)| &path[..=i])
+                .collect();
+            candidates.push(path);
+            matchers
+                .iter()
+                .rposition(|m| candidates.iter().any(|c| m.is_match(c)))
         })
         .collect()
 }

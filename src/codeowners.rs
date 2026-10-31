@@ -24,6 +24,15 @@ pub fn find_codeowners(root: &Path) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
+/// The root of the git repository containing `dir`: the nearest directory
+/// with a `.git` directory, or a `.git` file, as in worktrees and submodules.
+pub fn find_repo_root(dir: &Path) -> Option<PathBuf> {
+    let dir = std::path::absolute(dir).ok()?;
+    dir.ancestors()
+        .find(|ancestor| ancestor.join(".git").exists())
+        .map(Path::to_path_buf)
+}
+
 /// The repository root for a CODEOWNERS file in one of GitHub's locations.
 pub fn repo_root_for_codeowners(codeowners: &Path) -> PathBuf {
     let dir = codeowners.parent().unwrap_or(Path::new(""));

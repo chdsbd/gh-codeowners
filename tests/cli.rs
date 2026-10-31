@@ -285,3 +285,73 @@ fn rejects_options_that_dont_go_together() {
     assert_eq!(run(&repo, &["--unused", "--owner-of", "a"]).0, 2);
     assert_eq!(run(&repo, &["--check", "--owner-of", "a"]).0, 2);
 }
+
+fn run_in(dir: &Path, args: &[&str]) -> (i32, String, String) {
+    let output = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    (
+        output.status.code().unwrap(),
+        String::from_utf8(output.stdout).unwrap(),
+        String::from_utf8(output.stderr).unwrap(),
+    )
+}
+
+#[test]
+fn works_from_a_subdirectory() {
+    let repo = repo("subdirectory");
+    let docs = repo.0.join("docs");
+    let (status, stdout, _) = run_in(&docs, &[]);
+    assert_eq!(status, 0);
+    assert!(
+        stdout.starts_with(".github/CODEOWNERS: 4 rules, 5 files"),
+        "{stdout}"
+    );
+    // Relative paths are relative to the current directory.
+    let (status, stdout, _) = run_in(
+        &docs,
+        &[
+            "--owner-of",
+            "guide.md",
+            "--owner-of",
+            "../src/main.ts",
+            "--owner-of",
+            "./new/file",
+        ],
+    );
+    assert_eq!(status, 0);
+    assert_eq!(
+        stdout,
+        [
+            "docs/guide.md: @acme/writers, from .github/CODEOWNERS:3 *.md",
+            "src/main.ts: @acme/platform, from .github/CODEOWNERS:1 *",
+            "docs/new/file: @acme/docs, from .github/CODEOWNERS:2 /docs/",
+            "",
+        ]
+        .join("\n")
+    );
+    assert_eq!(
+        run_in(&docs, &["--errors"]).1,
+        ".github/CODEOWNERS: no problems\n"
+    );
+}
+
+#[test]
+fn owner_of_treats_directories_as_directories() {
+    let repo = repo("owner-of-dir");
+    // /docs/ only matches directories, so it owns docs/ but not a file named
+    // docs.
+    let (status, stdout, _) = run(&repo, &["--owner-of", "docs", "--owner-of", "src/docs"]);
+    assert_eq!(status, 0);
+    assert_eq!(
+        stdout,
+        [
+            "docs/: @acme/docs, from .github/CODEOWNERS:2 /docs/",
+            "src/docs: @acme/platform, from .github/CODEOWNERS:1 *",
+            "",
+        ]
+        .join("\n")
+    );
+}

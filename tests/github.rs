@@ -11,7 +11,14 @@ fn owns(line: &str, path: &str) -> bool {
         })
         .collect();
     let counts = count(&Rules::new(&rules), &[path], 1);
-    counts.rules.iter().any(|r| r.owned == 1)
+    let owned = counts.rules.iter().any(|r| r.owned == 1);
+    // Finding a file's owner should agree with counting.
+    assert_eq!(
+        gh_codeowners::owners_of(&rules, &[path])[0].is_some(),
+        owned,
+        "{line} | {path}"
+    );
+    owned
 }
 
 #[test]

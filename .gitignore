@@ -1,2 +1,5 @@
 target/
 node_modules/
+# A local build for `gh extension install .`
+/gh-codeowners
+/gh-codeowners.exe

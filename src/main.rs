@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use gh_codeowners::codeowners::{
     CodeownersRule, LineProblem, MAX_CODEOWNERS_BYTES, find_codeowners, find_problems,
-    parse_codeowners, repo_root_for_codeowners,
+    find_repo_root, parse_codeowners, repo_root_for_codeowners,
 };
 use gh_codeowners::counter::Rule;
 use gh_codeowners::report::{Json, Status, ownership_json, problem_json, rule_json};
@@ -16,13 +16,15 @@ Count the files each CODEOWNERS rule owns, and find rules that own nothing.
 A file counts towards the last rule that matches it, like on GitHub.
 
 Arguments:
-  root                 Repository root (default: current directory)
+  root                 Repository root (default: the git repository
+                       containing the current directory)
 
 Options:
   --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one
                        GitHub would use)
   --owner-of <path>    Instead of counting, print the rule that owns a file,
-                       which needn't be tracked. Repeat for more files.
+                       which needn't be tracked. Relative paths are relative
+                       to the current directory. Repeat for more files.
   --errors             Instead of counting, list lines GitHub rejects, and
                        lines that likely don't do what they look like
   --unused             Only list rules that own no files
@@ -148,11 +150,15 @@ fn is_stdin(path: &Path) -> bool {
 }
 
 fn load(args: &Args) -> Result<Loaded, String> {
-    let current_dir = || std::env::current_dir().unwrap_or_default();
+    // The repository containing the current directory, or else the directory.
+    let current_root = || {
+        let current_dir = std::env::current_dir().unwrap_or_default();
+        find_repo_root(&current_dir).unwrap_or(current_dir)
+    };
     let codeowners = match &args.codeowners {
         Some(path) => path.clone(),
         None => {
-            let root = args.root.clone().unwrap_or_else(current_dir);
+            let root = args.root.clone().unwrap_or_else(current_root);
             find_codeowners(&root)
                 .map(|path| {
                     path.strip_prefix(".")
@@ -164,7 +170,7 @@ fn load(args: &Args) -> Result<Loaded, String> {
     };
     let root = match &args.root {
         Some(root) => root.clone(),
-        None if is_stdin(&codeowners) => current_dir(),
+        None if is_stdin(&codeowners) => current_root(),
         None => repo_root_for_codeowners(&absolute(&codeowners)),
     };
     let text = if is_stdin(&codeowners) {
@@ -333,26 +339,42 @@ fn format_json(stats: &Stats, rules: &[&RuleStats]) -> String {
 }
 
 /// `path` relative to `root`, with `/` separators. Relative paths are
-/// already relative to the root.
+/// relative to the current directory.
 fn repo_path(root: &Path, path: &str) -> Result<String, String> {
-    let given = Path::new(path);
-    let relative = if given.is_absolute() {
-        match given.strip_prefix(absolute(root)) {
-            Ok(relative) => relative.to_path_buf(),
-            // One of the paths may go through a symlink, like /var on macOS.
-            Err(_) => real_path(given)
-                .zip(std::fs::canonicalize(root).ok())
-                .and_then(|(given, root)| given.strip_prefix(root).ok().map(Path::to_path_buf))
-                .ok_or_else(|| format!("{path} isn't in {}", root.display()))?,
-        }
-    } else {
-        given.to_path_buf()
+    let given = normalize(&absolute(Path::new(path)));
+    let relative = match given.strip_prefix(normalize(&absolute(root))) {
+        Ok(relative) => relative.to_path_buf(),
+        // One of the paths may go through a symlink, like /var on macOS.
+        Err(_) => real_path(&given)
+            .zip(std::fs::canonicalize(root).ok())
+            .and_then(|(given, root)| given.strip_prefix(root).ok().map(Path::to_path_buf))
+            .ok_or_else(|| format!("{path} isn't in {}", root.display()))?,
     };
     let mut relative = relative.to_string_lossy().into_owned();
     if cfg!(windows) {
         relative = relative.replace('\\', "/");
     }
-    Ok(relative.trim_start_matches("./").to_string())
+    // Directories end in a slash, so rules for directories match them.
+    if !relative.is_empty() && given.is_dir() {
+        relative.push('/');
+    }
+    Ok(relative)
+}
+
+/// `path` without `.` and `..` components, without looking at the file
+/// system.
+fn normalize(path: &Path) -> PathBuf {
+    let mut normal = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                normal.pop();
+            }
+            component => normal.push(component),
+        }
+    }
+    normal
 }
 
 /// `path` with symlinks resolved, even if the file doesn't exist yet.

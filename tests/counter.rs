@@ -120,3 +120,34 @@ fn agrees_with_testing_every_rule() {
         }
     }
 }
+
+#[test]
+fn owners_of_agrees_with_counting() {
+    for seed in 0..1000 {
+        let mut random = Random(seed);
+        let patterns: Vec<String> = (0..1 + random.next() % 8)
+            .map(|_| random_pattern(&mut random))
+            .collect();
+        let files = random_files(&mut random);
+        let rules: Vec<Rule> = patterns
+            .iter()
+            .enumerate()
+            .map(|(lineno, pattern)| Rule {
+                pattern: pattern.clone(),
+                lineno,
+            })
+            .collect();
+        let compiled = Rules::new(&rules);
+        let owners = gh_codeowners::owners_of(&rules, &files);
+        for (file, owner) in files.iter().zip(owners) {
+            let counted = count(&compiled, &[file], 1)
+                .rules
+                .iter()
+                .position(|rule| rule.owned == 1);
+            assert_eq!(
+                owner, counted,
+                "seed {seed}\npatterns: {patterns:?}\nfile: {file}"
+            );
+        }
+    }
+}
