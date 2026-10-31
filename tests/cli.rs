@@ -135,3 +135,26 @@ fn exits_with_2_when_theres_no_codeowners() {
         )
     );
 }
+
+#[test]
+fn rejects_codeowners_files_github_ignores_for_size() {
+    let repo = repo("size");
+    // GitHub loads a CODEOWNERS file of exactly 3 MiB, but not one byte more.
+    let limit = 3 * 1024 * 1024;
+    let mut text = "* @acme/platform\n".to_string();
+    text.push_str(&"#".repeat(limit - text.len() - 1));
+    text.push('\n');
+    std::fs::write(repo.0.join(".github/CODEOWNERS"), &text).unwrap();
+    assert_eq!(run(&repo, &[]).0, 0);
+    text.push('#');
+    std::fs::write(repo.0.join(".github/CODEOWNERS"), &text).unwrap();
+    let (status, _, stderr) = run(&repo, &[]);
+    assert_eq!(status, 2);
+    assert!(
+        stderr.ends_with(&format!(
+            "/.github/CODEOWNERS is {} bytes, over GitHub's limit of {limit}, so GitHub ignores it\n",
+            limit + 1
+        )),
+        "{stderr}"
+    );
+}

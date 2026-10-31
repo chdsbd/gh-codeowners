@@ -31,10 +31,16 @@ pub fn repo_root_for_codeowners(codeowners: &Path) -> PathBuf {
     }
 }
 
-// @user, @org/team, or an email address. Same as @snyk/github-codeowners.
+/// GitHub ignores CODEOWNERS files bigger than this. Its docs say "under
+/// 3 MB", but it loads files of exactly 3 MiB.
+pub const MAX_CODEOWNERS_BYTES: u64 = 3 * 1024 * 1024;
+
+// An owner GitHub accepts: @user, @org/team, or an email address with a dot
+// in its domain. GitHub skips lines with any other owner, but not lines with
+// users or teams that don't exist, which only can't be assigned.
 static OWNER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"(^@[a-zA-Z0-9_\-/]*$)|(?:[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*|"(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21\x23-\x5b\x5d-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])*")@(?:(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?|\[(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?|[a-z0-9-]*[a-z0-9]:(?:[\x01-\x08\x0b\x0c\x0e-\x1f\x21-\x5a\x53-\x7f]|\\[\x01-\x09\x0b\x0c\x0e-\x7f])+)\])"#,
+        r"^(?:@[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})$",
     )
     .unwrap()
 });
@@ -120,6 +126,57 @@ mod tests {
             .map(|r| (r.pattern.as_str(), r.owners.len()))
             .collect();
         assert_eq!(summary, [("a", 0), ("\\#c", 1)]);
+    }
+
+    #[test]
+    fn accepts_owners_like_github() {
+        // From a test repository on GitHub, which used a line with each of
+        // these owners, and skipped the rest.
+        for owner in [
+            "@octocat",
+            "@no-such-user",
+            "@-x",
+            "@a--b",
+            "@user-",
+            "@CAPS",
+            "@user_x",
+            "@org/team-name_1",
+            "@org/Team",
+            "nobody@example.com",
+            "UPPER@Example.COM",
+            "a.b+c@example.com",
+            ".a@example.com",
+            "a..b@example.com",
+            "a@sub.example.co",
+            "a@-x.com",
+        ] {
+            assert_eq!(parse_codeowners(&format!("a {owner}")).len(), 1, "{owner}");
+        }
+        for owner in [
+            "not-an-owner",
+            "@",
+            "@org/",
+            "@/team",
+            "@org//team",
+            "@org/team/sub",
+            "@a-b/c.d",
+            "@user.name",
+            "@user,",
+            "@@user",
+            "\"q\"@example.com",
+            "a@b",
+            "a@example",
+            "a@example.c",
+            "a@example.com.",
+            "a@exa_mple.com",
+            "a@[1.2.3.4]",
+            "@user@example.com",
+        ] {
+            assert!(
+                parse_codeowners(&format!("a {owner}")).is_empty(),
+                "{owner}"
+            );
+        }
     }
 
     #[test]

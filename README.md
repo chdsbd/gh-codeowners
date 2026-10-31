@@ -69,6 +69,8 @@ There's no negation either. A `!` pattern without a slash matches file names lik
 
 Lines GitHub rejects as invalid own nothing, such as ones with an unescaped bracket, a `\` before anything but a space, tab, `#`, `[`, `]` or `\`, or `***`. So do a few lines GitHub accepts but never matches: a different number of `\[`s and `\]`s, and a pattern starting with `\[` that has no slash.
 
+Like on GitHub, a line is skipped if any owner isn't an `@user`, an `@org/team`, or an email address with a dot in its domain. Users and teams that don't exist don't make a line invalid. GitHub ignores a CODEOWNERS file over 3 MiB (its docs say 3 MB), so codeowners-stats reports an error for one.
+
 These rules were checked against GitHub itself, by comparing which rule GitHub shows as owning each file in a test repository with thousands of random rules and paths.
 
 ## Testing

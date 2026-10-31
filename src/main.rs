@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use codeowners_stats::codeowners::{
-    CodeownersRule, find_codeowners, parse_codeowners, repo_root_for_codeowners,
+    CodeownersRule, MAX_CODEOWNERS_BYTES, find_codeowners, parse_codeowners,
+    repo_root_for_codeowners,
 };
 use codeowners_stats::count_tracked_files;
 use codeowners_stats::counter::Rule;
@@ -163,6 +164,13 @@ fn codeowners_stats(args: &Args) -> Result<Stats, String> {
         .unwrap_or_else(|| repo_root_for_codeowners(&absolute(&codeowners)));
     let text = std::fs::read_to_string(&codeowners)
         .map_err(|e| format!("{}: {e}", codeowners.display()))?;
+    if text.len() as u64 > MAX_CODEOWNERS_BYTES {
+        return Err(format!(
+            "{} is {} bytes, over GitHub's limit of {MAX_CODEOWNERS_BYTES}, so GitHub ignores it",
+            codeowners.display(),
+            text.len()
+        ));
+    }
     let rules = parse_codeowners(&text);
     let threads = args
         .threads
