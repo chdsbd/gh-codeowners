@@ -12,7 +12,6 @@ categories = ["command-line-utilities", "development-tools"]
 exclude = [".github"]
 
 [dependencies]
-fancy-regex = "0.20.0"
 memchr = "2.8.3"
 memmap2 = "0.9.12"
 regex = "1.13.1"

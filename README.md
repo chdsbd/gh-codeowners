@@ -63,4 +63,6 @@ for rule in &counts.rules {
 
 ## Matching
 
-Patterns are matched the same way as [@snyk/github-codeowners](https://github.com/snyk/github-codeowners): its gitignore-style conversion from node-ignore 5.2.4, quirks included.
+Patterns are matched like on GitHub: by [gitignore rules](https://git-scm.com/docs/gitignore#_pattern_format), with [GitHub's exceptions](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-syntax). Paths are case-sensitive, a pattern ending in `/*` doesn't match files in subdirectories, and `?` matches one byte, so `??` matches `é`. There's no negation: GitHub ignores a leading `!`, so `!foo` matches like `foo`. There are no character ranges either: `[` and `]` must be escaped as `\[` and `\]`.
+
+Lines GitHub rejects as invalid own nothing, such as ones with an unescaped bracket, a `\` before anything but a space, tab, `#`, `[`, `]` or `\`, or `***`. So do a few lines GitHub accepts but never matches: an unpaired `\[` or `\]`, and a pattern starting with `\[` that has no slash.

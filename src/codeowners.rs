@@ -39,18 +39,46 @@ static OWNER: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
+/// Split on whitespace up to a comment. Like on GitHub, an unescaped `#`
+/// starts a comment anywhere, even inside a pattern, and an escaped space
+/// is part of a pattern.
+fn split_words(line: &str) -> Vec<String> {
+    let mut words = Vec::new();
+    let mut word = String::new();
+    let mut chars = line.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            word.push(c);
+            if let Some(next) = chars.next() {
+                word.push(next);
+            }
+        } else if c == '#' {
+            break;
+        } else if c.is_whitespace() {
+            if !word.is_empty() {
+                words.push(std::mem::take(&mut word));
+            }
+        } else {
+            word.push(c);
+        }
+    }
+    if !word.is_empty() {
+        words.push(word);
+    }
+    words
+}
+
 /// Parse CODEOWNERS text into rules. Like GitHub, lines with an invalid
 /// owner are skipped.
 pub fn parse_codeowners(text: &str) -> Vec<CodeownersRule> {
     let text = text.replace('\r', "");
     let mut rules = Vec::new();
     for (lineno, line) in text.split('\n').enumerate() {
-        let without_comment = line.split('#').next().unwrap_or("").trim();
-        let mut words = without_comment.split_whitespace();
+        let mut words = split_words(line).into_iter();
         let Some(pattern) = words.next() else {
             continue;
         };
-        let owners: Vec<String> = words.map(String::from).collect();
+        let owners: Vec<String> = words.collect();
         if owners.iter().all(|owner| OWNER.is_match(owner)) {
             rules.push(CodeownersRule {
                 pattern: pattern.to_string(),
@@ -75,6 +103,23 @@ mod tests {
             .map(|r| (r.pattern.as_str(), r.owners.len(), r.lineno))
             .collect();
         assert_eq!(summary, [("*", 1, 1), ("/docs/", 2, 3), ("/vendor/", 0, 4)]);
+    }
+
+    #[test]
+    fn keeps_escaped_spaces_in_patterns() {
+        let rules = parse_codeowners("foo/b\\ ar.py @acme/x\n");
+        assert_eq!(rules[0].pattern, "foo/b\\ ar.py");
+        assert_eq!(rules[0].owners, ["@acme/x"]);
+    }
+
+    #[test]
+    fn starts_comments_at_unescaped_hashes() {
+        let rules = parse_codeowners("a#b @acme/x\n\\#c @acme/y\n");
+        let summary: Vec<_> = rules
+            .iter()
+            .map(|r| (r.pattern.as_str(), r.owners.len()))
+            .collect();
+        assert_eq!(summary, [("a", 0), ("\\#c", 1)]);
     }
 
     #[test]

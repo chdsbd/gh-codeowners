@@ -1,261 +1,161 @@
-//! Turns a CODEOWNERS pattern into a regex, the same way as
-//! @snyk/github-codeowners: node-ignore 5.2.4's conversion, plus its
-//! fix for patterns ending in `/*`. This is a line-by-line port of
-//! node-ignore's replacers, so its quirks carry over too.
-//!
-//! The replacers are from node-ignore, Copyright (c) 2013 Kael Zhang
-//! <i@kael.me>, contributors, under the MIT License.
+//! Turns a CODEOWNERS pattern into a regex, the way GitHub matches them:
+//! gitignore rules, except that paths are case-sensitive, there are no
+//! character classes, and a leading `!` is ignored rather than negating.
+//! Unlike gitignore, a pattern ending in `/*` doesn't match nested files.
+//! Where GitHub's behavior differs from its docs, this follows what GitHub
+//! does, as checked against a test repository.
 
-use std::sync::{LazyLock, OnceLock};
+use std::sync::OnceLock;
 
-use fancy_regex::Regex;
-
-type Captures<'t> = fancy_regex::Captures<'t, str>;
-
-struct Replacer {
-    regex: Regex,
-    // Replace every match, like a JavaScript regex with the `g` flag.
-    global: bool,
-    // Called with the match, the string being replaced and the pattern.
-    replace: fn(&Captures, &str, &str) -> String,
+/// GitHub doesn't support negation, and matches `!foo` like `foo`.
+pub fn strip_negation(pattern: &str) -> &str {
+    pattern.strip_prefix('!').unwrap_or(pattern)
 }
 
-fn group<'a>(caps: &Captures<'a>, i: usize) -> &'a str {
-    caps.get(i).map_or("", |m| m.as_str())
+/// Whether `pattern` can match a path. Blank lines, comments and patterns
+/// GitHub rejects as invalid can't, nor can a few that GitHub accepts but
+/// never matches.
+pub fn can_match(pattern: &str) -> bool {
+    let pattern = strip_negation(pattern);
+    !(pattern.trim().is_empty()
+        || pattern.starts_with('#')
+        || pattern.trim_matches('/').is_empty())
+        && is_valid(pattern)
+        && brackets_pair_up(pattern)
+        // On GitHub, a pattern starting with `\[` matches nothing unless it
+        // has a slash.
+        && !(pattern.starts_with("\\[") && !pattern.contains('/'))
 }
 
-fn replacer(regex: &str, global: bool, replace: fn(&Captures, &str, &str) -> String) -> Replacer {
-    Replacer {
-        regex: Regex::new(regex).unwrap(),
-        global,
-        replace,
+/// Whether GitHub accepts `pattern`, which its CODEOWNERS errors API checks:
+/// `[` and `]` must be escaped, `\` can only escape a space, tab, `#`, `[`,
+/// `]` or `\`, and there can't be more than two `*`s in a row.
+fn is_valid(pattern: &str) -> bool {
+    let mut stars = 0;
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        stars = if c == '*' { stars + 1 } else { 0 };
+        match c {
+            '\\' if !matches!(chars.next(), Some(' ' | '\t' | '#' | '[' | ']' | '\\')) => {
+                return false;
+            }
+            '[' | ']' => return false,
+            _ if stars > 2 => return false,
+            _ => {}
+        }
+    }
+    true
+}
+
+/// Whether each `\[` is closed by a `\]` before the next `\[`. GitHub
+/// matches nothing otherwise.
+fn brackets_pair_up(pattern: &str) -> bool {
+    let mut open = false;
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            match chars.next() {
+                Some('[') if !open => open = true,
+                Some(']') if open => open = false,
+                Some('[' | ']') => return false,
+                _ => {}
+            }
+        }
+    }
+    !open
+}
+
+/// Whether `pattern` is relative to the root: it has a leading or middle
+/// slash. Otherwise it matches at any depth.
+fn is_anchored(pattern: &str) -> bool {
+    pattern.strip_suffix('/').unwrap_or(pattern).contains('/')
+}
+
+/// Append the regex for one path segment, without slashes.
+fn push_segment(out: &mut String, segment: &str) {
+    // A segment of only `*`s names something, so it can't be empty.
+    if segment.bytes().all(|c| c == b'*') {
+        out.push_str("[^/]+");
+        return;
+    }
+    let mut chars = segment.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' => out.push_str("[^/]*"),
+            // One byte, even of a multibyte character, like on GitHub.
+            '?' => out.push_str("[^/]"),
+            '\\' => {
+                if let Some(escaped) = chars.next() {
+                    push_literal(out, escaped);
+                }
+            }
+            _ => push_literal(out, c),
+        }
     }
 }
 
-static HAS_LEADING_OR_MIDDLE_SLASH: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\/(?!$)").unwrap());
-static REGEX_RANGE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"([0-z])-([0-z])").unwrap());
-
-// Drop out-of-order ranges like `[z-a]`, which are fine in gitignore but
-// invalid regex.
-fn sanitize_range(range: &str) -> String {
-    REGEX_RANGE
-        .replace_all(range, |caps: &Captures| {
-            if group(caps, 1) <= group(caps, 2) {
-                group(caps, 0).to_string()
-            } else {
-                String::new()
-            }
-        })
-        .into_owned()
+fn push_literal(out: &mut String, c: char) {
+    if c.is_ascii() {
+        out.push_str(&regex::escape(c.encode_utf8(&mut [0; 4])));
+    } else {
+        // Regexes match bytes, so match the character's UTF-8 encoding.
+        for byte in c.encode_utf8(&mut [0; 4]).bytes() {
+            out.push_str(&format!("\\x{byte:02x}"));
+        }
+    }
 }
 
-static REPLACERS: LazyLock<Vec<Replacer>> = LazyLock::new(|| {
-    vec![
-        // Trailing spaces are ignored unless escaped.
-        replacer(r"\\?\s+$", false, |caps, _, _| {
-            if group(caps, 0).starts_with('\\') {
-                " "
-            } else {
-                ""
-            }
-            .to_string()
-        }),
-        replacer(r"\\\s", true, |_, _, _| " ".to_string()),
-        // Escape regex metacharacters.
-        replacer(r"[\\$.|*+(){^]", true, |caps, _, _| {
-            format!("\\{}", group(caps, 0))
-        }),
-        replacer(r"(?!\\)\?", true, |_, _, _| "[^/]".to_string()),
-        // A leading slash matches the beginning of the path.
-        replacer(r"^\/", false, |_, _, _| "^".to_string()),
-        replacer(r"\/", true, |_, _, _| "\\/".to_string()),
-        // A leading `**/` matches in all directories.
-        replacer(r"^\^*\\\*\\\*\\\/", false, |_, _, _| {
-            "^(?:.*\\/)?".to_string()
-        }),
-        // Patterns without a leading or middle slash match at any depth.
-        replacer(r"^(?=[^^])", false, |_, _, pattern| {
-            if HAS_LEADING_OR_MIDDLE_SLASH.is_match(pattern).unwrap() {
-                "^"
-            } else {
-                "(?:^|\\/)"
-            }
-            .to_string()
-        }),
-        // `/**/` matches zero or more directories, and a trailing `/**`
-        // everything inside.
-        replacer(r"\\\/\\\*\\\*(?=\\\/|$)", true, |caps, input, _| {
-            if caps.get(0).unwrap().end() < input.len() {
-                "(?:\\/[^\\/]+)*"
-            } else {
-                "\\/.+"
-            }
-            .to_string()
-        }),
-        // Intermediate wildcards. Only the last of consecutive `*`s counts.
-        replacer(r"(^|[^\\]+)(\\\*)+(?=.+)", true, |caps, _, _| {
-            format!(
-                "{}{}",
-                group(caps, 1),
-                group(caps, 2).replace("\\*", "[^\\/]*")
-            )
-        }),
-        // Unescape, reverting the metacharacter escaping except for `\`.
-        replacer(r"\\\\\\(?=[$.|*+(){^])", true, |_, _, _| "\\".to_string()),
-        replacer(r"\\\\", true, |_, _, _| "\\".to_string()),
-        // Ranges like `[a-z]`.
-        replacer(r"(\\)?\[([^\]/]*?)(\\*)($|\])", true, |caps, _, _| {
-            let (lead, range, end, close) = (
-                group(caps, 1),
-                group(caps, 2),
-                group(caps, 3),
-                group(caps, 4),
-            );
-            if lead == "\\" {
-                let end = &end[..end.len() - end.len() % 2];
-                format!("\\[{range}{end}{close}")
-            } else if close == "]" && end.len() % 2 == 0 {
-                format!("[{}{end}]", sanitize_range(range))
-            } else {
-                "[]".to_string()
-            }
-        }),
-        // Patterns match the path or a directory containing it, except
-        // those ending in `/`, which only match directories.
-        replacer(r"(?:[^*])$", false, |caps, _, _| {
-            let m = group(caps, 0);
-            if m.ends_with('/') {
-                format!("{m}$")
-            } else {
-                format!("{m}(?=$|\\/$)")
-            }
-        }),
-        // Trailing wildcard.
-        replacer(r"(\^|\\\/)?\\\*$", false, |caps, _, _| {
-            let prefix = match caps.get(1) {
-                Some(p) => format!("{}[^/]+", p.as_str()),
-                None => "[^/]*".to_string(),
-            };
-            format!("{prefix}(?=$|\\/$)")
-        }),
-    ]
-});
-
-/// Whether `pattern` can match a path. Blank lines, comments, invalid
-/// patterns and negations can't.
-pub fn can_match(pattern: &str) -> bool {
-    !(pattern.trim().is_empty()
-        || pattern.starts_with('#')
-        || invalid_trailing_backslash(pattern)
-        // Negations can't own files.
-        || pattern.starts_with('!'))
-}
-
-/// node-ignore's regex source for `pattern`, or None if it can't match.
-pub fn javascript_regex(pattern: &str) -> Option<String> {
+/// The regex source for `pattern`, or None if it can't match. It matches
+/// a file path, or a directory path with a trailing slash.
+pub fn regex_source(pattern: &str) -> Option<String> {
     if !can_match(pattern) {
         return None;
     }
-    let pattern = if let Some(rest) = pattern.strip_prefix("\\!") {
-        format!("!{rest}")
-    } else if let Some(rest) = pattern.strip_prefix("\\#") {
-        format!("#{rest}")
+    let pattern = strip_negation(pattern);
+    let dir_only = pattern.ends_with('/');
+    let trimmed = pattern.strip_suffix('/').unwrap_or(pattern);
+    let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
+    let mut out = String::from(if is_anchored(pattern) {
+        "(?s-u)^"
     } else {
-        pattern.to_string()
-    };
-    let mut source = pattern.clone();
-    for r in REPLACERS.iter() {
-        let replace = |caps: &Captures| (r.replace)(caps, &source, &pattern);
-        source = if r.global {
-            r.regex.replace_all(&source, replace).into_owned()
-        } else {
-            r.regex.replace(&source, replace).into_owned()
-        };
-    }
-    // GitHub doesn't match nested files for rules ending in `/*`.
-    if pattern.ends_with("/*") {
-        source = source.replacen("(?=$|\\/$)", "(?=$|[^\\/]$)", 1);
-    }
-    Some(source)
-}
-
-fn invalid_trailing_backslash(pattern: &str) -> bool {
-    // `(?:[^\\]|^)\\$`: ends with a backslash that isn't itself escaped.
-    let bytes = pattern.as_bytes();
-    bytes.ends_with(b"\\") && (bytes.len() == 1 || bytes[bytes.len() - 2] != b'\\')
-}
-
-/// Translate node-ignore's JavaScript regex to the `regex` crate, which has
-/// no lookaround. The only lookahead is at the very end, where it's
-/// equivalent to a group for finding a match.
-fn to_rust(source: &str) -> Option<String> {
-    let mut out = String::with_capacity(source.len() + 8);
-    out.push_str("(?i)");
-    let mut chars = source.chars().peekable();
-    let mut in_class = false;
-    while let Some(c) = chars.next() {
-        match c {
-            '\\' => {
-                out.push('\\');
-                out.push(chars.next()?);
+        "(?s-u)^(?:.*/)?"
+    });
+    let segments: Vec<&str> = trimmed.split('/').collect();
+    for (i, segment) in segments.iter().enumerate() {
+        let last = i == segments.len() - 1;
+        if *segment == "**" {
+            // A trailing `/**` matches everything inside, and a leading or
+            // middle `**/` zero or more directories.
+            if last {
+                out.push_str(if dir_only { ".+/$" } else { ".+" });
+                return Some(out);
             }
-            '[' if in_class => out.push_str("\\["),
-            // Set operators in the regex crate, but literals in JavaScript.
-            '&' | '~' if in_class => {
-                out.push('\\');
-                out.push(c);
-            }
-            '[' => {
-                // JavaScript's `[]` matches nothing.
-                if chars.peek() == Some(&']') {
-                    chars.next();
-                    out.push_str(r"[^\x00-\x{10FFFF}]");
-                    continue;
-                }
-                in_class = true;
-                out.push('[');
-                // A leading `]` or `^]` is literal in the regex crate.
-                if chars.peek() == Some(&'^') {
-                    out.push(chars.next().unwrap());
-                }
-            }
-            ']' if in_class => {
-                in_class = false;
-                out.push(']');
-            }
-            '(' if !in_class && chars.peek() == Some(&'?') => {
-                let rest: String = chars.clone().take(2).collect();
-                if rest == "?=" || rest == "?!" {
-                    if rest == "?!" {
-                        return None;
-                    }
-                    // `(?=` becomes `(?:`, and must close the regex.
-                    chars.next();
-                    chars.next();
-                    out.push_str("(?:");
-                } else {
-                    out.push('(');
-                }
-            }
-            _ => out.push(c),
+            out.push_str("(?:.*/)?");
+            continue;
         }
+        push_segment(&mut out, segment);
+        if !last {
+            out.push('/');
+        }
+    }
+    if dir_only {
+        out.push_str("/$");
+    } else if pattern.ends_with("/*") {
+        // GitHub doesn't match nested files for rules ending in `/*`.
+        out.push('$');
+    } else {
+        // The path, or a directory containing it.
+        out.push_str("/?$");
     }
     Some(out)
 }
 
-/// `pattern`'s regex in the `regex` crate's syntax, matching
-/// case-insensitively like @snyk/github-codeowners.
-pub fn rust_regex(pattern: &str) -> Option<String> {
-    to_rust(&javascript_regex(pattern)?)
-}
-
 /// Compile `pattern` for the `regex` crate.
 pub fn compile(pattern: &str) -> Option<regex::bytes::Regex> {
-    regex::bytes::Regex::new(&rust_regex(pattern)?).ok()
+    regex::bytes::Regex::new(&regex_source(pattern)?).ok()
 }
 
-/// Tests paths against a pattern, case-insensitively. Most CODEOWNERS
+/// Tests paths against a pattern. Most CODEOWNERS
 /// patterns are plain paths, and comparing strings is much faster than
 /// compiling a regex for each (tens of microseconds, or tens of milliseconds
 /// for thousands of rules), so regexes are only built for wildcards, and
@@ -282,32 +182,16 @@ pub enum Matcher {
     },
 }
 
-/// Lowercase `bytes` like JavaScript's toLowerCase, for comparing paths.
-pub fn lowercase(bytes: &[u8]) -> Vec<u8> {
-    if bytes.is_ascii() {
-        bytes.to_ascii_lowercase()
-    } else {
-        String::from_utf8_lossy(bytes).to_lowercase().into_bytes()
-    }
-}
-
-fn eq_ignore_case(path: &[u8], lower: &[u8]) -> bool {
-    if path.is_ascii() {
-        path.eq_ignore_ascii_case(lower)
-    } else {
-        lowercase(path) == lower
-    }
-}
-
 impl Matcher {
     pub fn new(pattern: &str) -> Matcher {
         if !can_match(pattern) {
             return Matcher::Never;
         }
+        let pattern = strip_negation(pattern);
         if pattern == "*" {
             return Matcher::Always;
         }
-        if pattern.contains(['*', '?', '[', '\\']) {
+        if pattern.contains(['*', '?', '\\']) {
             return Matcher::Regex {
                 pattern: pattern.to_string(),
                 regex: OnceLock::new(),
@@ -315,15 +199,15 @@ impl Matcher {
         }
         let dir_only = pattern.ends_with('/');
         let trimmed = pattern.strip_suffix('/').unwrap_or(pattern);
-        if HAS_LEADING_OR_MIDDLE_SLASH.is_match(pattern).unwrap() {
+        if is_anchored(pattern) {
             let path = trimmed.strip_prefix('/').unwrap_or(trimmed);
             Matcher::Exact {
-                path: lowercase(path.as_bytes()),
+                path: path.as_bytes().to_vec(),
                 dir_only,
             }
         } else {
             Matcher::Name {
-                name: lowercase(trimmed.as_bytes()),
+                name: trimmed.as_bytes().to_vec(),
                 dir_only,
             }
         }
@@ -340,12 +224,12 @@ impl Matcher {
             Matcher::Never => false,
             Matcher::Always => !path.is_empty(),
             Matcher::Exact { path, dir_only } => {
-                (is_dir || !dir_only) && eq_ignore_case(trimmed, path)
+                (is_dir || !dir_only) && trimmed == path.as_slice()
             }
             Matcher::Name { name, dir_only } => {
                 (is_dir || !dir_only)
                     && trimmed.len() >= name.len()
-                    && eq_ignore_case(&trimmed[trimmed.len() - name.len()..], name)
+                    && trimmed.ends_with(name)
                     && (trimmed.len() == name.len()
                         || trimmed[trimmed.len() - name.len() - 1] == b'/')
             }
@@ -361,35 +245,119 @@ impl Matcher {
 mod tests {
     use super::*;
 
+    fn matches(pattern: &str, path: &str) -> bool {
+        compile(pattern).unwrap().is_match(path.as_bytes())
+    }
+
     #[test]
-    fn matches_node_ignore_sources() {
-        // From running node-ignore 5.2.4.
-        for (pattern, expected) in [
-            ("*", "(?:^|\\/)[^/]*(?=$|\\/$)"),
-            ("/web/", "^web\\/$"),
-            ("*.md", "(?:^|\\/)[^\\/]*\\.md(?=$|\\/$)"),
-            ("docs/*", "^docs\\/[^/]+(?=$|[^\\/]$)"),
-            ("a/**/b", "^a(?:\\/[^\\/]+)*\\/b(?=$|\\/$)"),
-            ("**/foo", "^(?:.*\\/)?foo(?=$|\\/$)"),
-            ("/lib/**", "^lib\\/.+(?=$|\\/$)"),
-            ("a?c", "(?:^|\\/)a[^\\/]c(?=$|\\/$)"),
-            ("[a-c]x", "(?:^|\\/)[a-c]x(?=$|\\/$)"),
+    fn follows_githubs_examples() {
+        // From GitHub's CODEOWNERS documentation.
+        for (pattern, path, expected) in [
+            ("*.js", "src/app.js", true),
+            ("/build/logs/", "build/logs/", true),
+            ("/build/logs/", "src/build/logs/", false),
+            ("docs/*", "docs/getting-started.md", true),
+            ("docs/*", "docs/build-app/troubleshooting.md", false),
+            ("docs/*", "docs/build-app/", false),
+            ("docs/*", "docs/", false),
+            ("apps/", "apps/", true),
+            ("apps/", "src/apps/", true),
+            ("apps/", "apps", false),
+            ("**/logs", "deeply/nested/logs/", true),
+            ("**/logs", "logs/", true),
+            ("/apps/github", "apps/github/", true),
+            ("/apps/github", "apps/github", true),
         ] {
-            assert_eq!(javascript_regex(pattern).unwrap(), expected, "{pattern}");
+            assert_eq!(matches(pattern, path), expected, "{pattern} {path}");
         }
     }
 
     #[test]
-    fn negations_never_match() {
-        assert!(compile("!a.md").is_none());
+    fn matches_paths_case_sensitively() {
+        assert!(!matches("*.MD", "README.md"));
+        assert!(!matches("/Docs/", "docs/"));
+        assert!(!matches("docs", "Docs"));
+    }
+
+    #[test]
+    fn matches_escaped_brackets_literally() {
+        assert!(matches("x\\[a-c\\]", "d/x[a-c]"));
+        assert!(!matches("x\\[a-c\\]", "xb"));
+        assert!(matches("/app/\\[id\\]/", "app/[id]/"));
+    }
+
+    #[test]
+    fn rejects_patterns_github_rejects() {
+        // From GitHub's CODEOWNERS errors API.
+        for (pattern, valid) in [
+            ("[a-c]x", false),
+            ("/app/[id]/", false),
+            ("x]", false),
+            ("/\\[x\\]", true),
+            ("\\*star", false),
+            ("\\?a", false),
+            ("a\\b", false),
+            ("a\\\\b", true),
+            ("\\#foo", true),
+            ("foo\\ bar", true),
+            ("tab\\\tx", true),
+            ("***", false),
+            ("a/***/b", false),
+            ("a**b", true),
+            ("**a", true),
+            ("{a,b}", true),
+        ] {
+            assert_eq!(compile(pattern).is_some(), valid, "{pattern}");
+        }
+    }
+
+    #[test]
+    fn matches_wildcards_like_gitignore() {
+        for (pattern, path, expected) in [
+            ("a?c", "x/abc", true),
+            ("a?c", "a/c", false),
+            ("a/**/b", "a/b", true),
+            ("a/**/b", "a/x/y/b", true),
+            ("/lib/**", "lib/x/y", true),
+            ("/lib/**", "lib", false),
+            ("*.md", "docs/a.md", true),
+            ("/*", "README.md", true),
+            ("/*", "docs/a.md", false),
+            ("\\#a", "#a", true),
+            ("a\\ b", "a b", true),
+            ("a\\\\b", "a\\b", true),
+            ("é.txt", "a/é.txt", true),
+            ("?.txt", "é.txt", false),
+            ("??.txt", "é.txt", true),
+        ] {
+            assert_eq!(matches(pattern, path), expected, "{pattern} {path}");
+        }
+    }
+
+    #[test]
+    fn ignores_negation() {
+        assert!(matches("!foo", "x/foo"));
+        assert!(!matches("!foo", "!foo"));
+    }
+
+    #[test]
+    fn matches_nothing_where_github_matches_nothing() {
+        // From a test repository on GitHub.
+        for pattern in ["\\[ab\\]x", "\\[ab\\]*.js", "a\\[b"] {
+            assert!(compile(pattern).is_none(), "{pattern}");
+        }
+        for pattern in ["\\[ab\\]x/", "/\\[ab\\]x", "**/\\[ab\\]x", "x\\[ab\\]"] {
+            assert!(compile(pattern).is_some(), "{pattern}");
+        }
     }
 
     #[test]
     fn plain_paths_match_like_their_regexes() {
-        let paths: [&[u8]; 12] = [
+        let paths: [&[u8]; 13] = [
             b"docs",
             b"docs/",
             b"Docs/",
+            b"Docs",
             b"a/docs",
             b"a/docs/",
             b"docs/a",
@@ -401,7 +369,7 @@ mod tests {
             b"A/B/c",
         ];
         for pattern in [
-            "docs", "docs/", "/docs", "/docs/", "a/b", "/a/b/", "a/docs", "*",
+            "docs", "docs/", "/docs", "/docs/", "a/b", "/a/b/", "a/docs", "*", "{a,b}",
         ] {
             let matcher = Matcher::new(pattern);
             assert!(!matches!(matcher, Matcher::Regex { .. }), "{pattern}");

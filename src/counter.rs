@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use regex::bytes::Regex;
 
-use crate::pattern::{self, lowercase};
+use crate::pattern;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Rule {
@@ -41,14 +41,14 @@ struct CompiledRule {
     matcher: pattern::Matcher,
     // Patterns ending in "/" only match directories.
     dir_only: bool,
-    // Lowercased leading path segments without wildcards. Empty for rules
+    // Leading path segments without wildcards. Empty for rules
     // that can match anywhere.
     prefix: Vec<u8>,
-    // Lowercased extension for `*.ext` rules.
+    // Extension for `*.ext` rules.
     suffix: Option<Vec<u8>>,
 }
 
-static SUFFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\*(\.[^*?\[\\/!]+)/?$").unwrap());
+static SUFFIX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^\*(\.[^*?\\/]+)/?$").unwrap());
 
 impl CompiledRule {
     fn can_match(&self) -> bool {
@@ -57,13 +57,14 @@ impl CompiledRule {
 }
 
 fn compile_rule(pattern: &str) -> CompiledRule {
+    let pattern = pattern::strip_negation(pattern);
     CompiledRule {
         matcher: pattern::Matcher::new(pattern),
         dir_only: pattern.ends_with('/'),
         prefix: literal_prefix(pattern),
         suffix: SUFFIX
             .captures(pattern.as_bytes())
-            .map(|caps| lowercase(&caps[1])),
+            .map(|caps| caps[1].to_vec()),
     }
 }
 
@@ -76,12 +77,12 @@ fn literal_prefix(pattern: &str) -> Vec<u8> {
     }
     let literal: Vec<&str> = trimmed
         .split('/')
-        .take_while(|segment| !segment.contains(['*', '?', '[', '\\', '!']))
+        .take_while(|segment| !segment.contains(['*', '?', '\\']))
         .collect();
-    lowercase(literal.join("/").as_bytes())
+    literal.join("/").into_bytes()
 }
 
-/// Rules for `*.ext` patterns, keyed by lowercase extension.
+/// Rules for `*.ext` patterns, keyed by extension.
 #[derive(Default)]
 struct SuffixIndex {
     rules: HashMap<Vec<u8>, Vec<u32>>,
@@ -101,37 +102,21 @@ impl SuffixIndex {
         }
     }
 
-    /// Call `f` with the rules for each extension `path`'s name ends with,
-    /// ignoring case. Rather than testing every extension against every
-    /// path, this looks up the suffixes starting at each of the last few
-    /// dots.
+    /// Call `f` with the rules for each extension `path`'s name ends with.
+    /// Rather than testing every extension against every path, this looks up
+    /// the suffixes starting at each of the last few dots.
     fn for_each<'r>(&'r self, path: &[u8], mut f: impl FnMut(&'r [u32])) {
         let Some(&last) = path.last() else {
             return;
         };
-        if self.rules.is_empty()
-            || (last.is_ascii() && !self.last_bytes[usize::from(last.to_ascii_lowercase())])
-        {
+        if self.rules.is_empty() || !self.last_bytes[usize::from(last)] {
             return;
         }
         let tail = &path[path.len().saturating_sub(self.longest)..];
         let tail = &tail[tail.iter().rposition(|&c| c == b'/').map_or(0, |i| i + 1)..];
-        let mut buf = [0u8; 64];
-        let owned;
-        let lower: &[u8] = if tail.len() <= buf.len() && tail.is_ascii() {
-            let buf = &mut buf[..tail.len()];
-            buf.copy_from_slice(tail);
-            buf.make_ascii_lowercase();
-            buf
-        } else {
-            // Non-ASCII lowercasing can change lengths, so use the whole name.
-            let name = &path[path.iter().rposition(|&c| c == b'/').map_or(0, |i| i + 1)..];
-            owned = lowercase(name);
-            &owned
-        };
-        for (i, &c) in lower.iter().enumerate() {
+        for (i, &c) in tail.iter().enumerate() {
             if c == b'.'
-                && let Some(rules) = self.rules.get(&lower[i..])
+                && let Some(rules) = self.rules.get(&tail[i..])
             {
                 f(rules);
             }
@@ -335,7 +320,6 @@ impl<'a> Counter<'a> {
 
     fn enter_dir(&mut self, dir: &[u8]) -> DirFrame<'a> {
         let rules = self.rules;
-        let lower = lowercase(dir);
         let mut test_path = std::mem::take(&mut self.test_path);
         test_path.clear();
         test_path.extend_from_slice(dir);
@@ -348,7 +332,7 @@ impl<'a> Counter<'a> {
             parent.any_file_candidates.clone(),
             parent.winner,
         );
-        let own_dir_rules = rules.dir_index.by_prefix.get(&lower).map(Vec::as_slice);
+        let own_dir_rules = rules.dir_index.by_prefix.get(dir).map(Vec::as_slice);
         let mut winner = self.last_match(Some(&parent_dir), &test_path, parent_winner);
         winner = self.last_match(own_dir_rules, &test_path, winner);
         winner = self.match_suffixes(&rules.dir_index, dir, winner);
@@ -357,7 +341,7 @@ impl<'a> Counter<'a> {
             self.check_matches(Some(&any_dir_candidates), &test_path);
         }
         self.test_path = test_path;
-        let own_file_rules = rules.file_index.by_prefix.get(&lower).map(Vec::as_slice);
+        let own_file_rules = rules.file_index.by_prefix.get(dir).map(Vec::as_slice);
         DirFrame {
             dir: dir.to_vec(),
             winner,
@@ -365,7 +349,7 @@ impl<'a> Counter<'a> {
             file_candidates: merge_above(&parent_file, own_file_rules, winner),
             any_dir_candidates,
             any_file_candidates: merge_above(&parent_any_file, own_file_rules, -1),
-            by_parent: rules.file_index.by_parent.get(&lower).map(Vec::as_slice),
+            by_parent: rules.file_index.by_parent.get(dir).map(Vec::as_slice),
         }
     }
 
@@ -566,19 +550,36 @@ mod tests {
 
     #[test]
     fn follows_githubs_matching_rules() {
-        let r = rules(&["web/", "*.TS", "/docs/*", "/lib", "/missing/*.md"]);
+        let r = rules(&[
+            "web/",
+            "*.TS",
+            "/docs/*",
+            "/lib",
+            "/missing/*.md",
+            "/app/\\[id\\]/",
+        ]);
         let files = [
             "web",
             "src/web/a.js",
             "x.ts",
+            "y.TS",
             "Lib/y.js",
             "lib/x.js",
             "docs/a.md",
             "docs/sub/b.md",
+            "app/[id]/page.tsx",
+            "app/i/page.tsx",
         ];
         assert_eq!(
             owned(&count(&r, &files, 1)),
-            [(1, true), (1, true), (1, true), (2, true), (0, false)]
+            [
+                (1, true),
+                (1, true),
+                (1, true),
+                (1, true),
+                (0, false),
+                (1, true)
+            ]
         );
     }
 }
