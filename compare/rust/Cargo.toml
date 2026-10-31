@@ -1,0 +1,12 @@
+[package]
+name = "compare-rust"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+codeowners-rs = "=0.1.1"
+codeowners-stats = { path = "../.." }
+
+# Not part of the codeowners-stats package.
+[workspace]

@@ -70,3 +70,13 @@ There's no negation either. A `!` pattern without a slash matches file names lik
 Lines GitHub rejects as invalid own nothing, such as ones with an unescaped bracket, a `\` before anything but a space, tab, `#`, `[`, `]` or `\`, or `***`. So do a few lines GitHub accepts but never matches: a different number of `\[`s and `\]`s, and a pattern starting with `\[` that has no slash.
 
 These rules were checked against GitHub itself, by comparing which rule GitHub shows as owning each file in a test repository with thousands of random rules and paths.
+
+## Testing
+
+`cargo test` checks the matcher against every file ownership recorded from GitHub in [`tests/github.txt`](tests/github.txt).
+
+To see how other CODEOWNERS libraries do on the same cases, run [`compare/compare.py`](compare/compare.py) with cargo, go and npm on your PATH. It compares [codeowners-rs](https://github.com/hmarr/codeowners-rs), [hmarr/codeowners](https://github.com/hmarr/codeowners), [sbdchd/codeowners](https://github.com/sbdchd/codeowners) and the [@snyk/github-codeowners](https://github.com/snyk/github-codeowners) fork used by the VS Code extension:
+
+```
+uv run compare/compare.py
+```

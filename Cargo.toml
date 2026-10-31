@@ -9,7 +9,7 @@ repository = "https://github.com/chdsbd/codeowners-stats"
 readme = "README.md"
 keywords = ["codeowners", "github", "git"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = [".github"]
+exclude = [".github", "compare"]
 
 [dependencies]
 memchr = "2.8.3"
