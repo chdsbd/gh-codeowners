@@ -8,14 +8,18 @@ Runs codeowners-stats, codeowners-rs, hmarr/codeowners (Go), sbdchd/codeowners
 (Python) and the extension's @snyk/github-codeowners fork (Node) over every
 recorded case, then prints how often each agrees with GitHub and the cases
 where it doesn't. Needs cargo, go and npm on PATH; a library whose tool is
-missing is skipped.
+missing is skipped, unless --require-all is passed. Exits with status 1 if
+codeowners-stats disagrees with GitHub. In GitHub Actions, it also writes a
+table to the job summary.
 
-    uv run compare/compare.py [--limit N]
+    uv run compare/compare.py [--limit N] [--require-all]
 """
 
 import argparse
+import os
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 from codeowners import CodeOwners
@@ -63,6 +67,9 @@ def main() -> None:
     parser.add_argument(
         "--limit", type=int, default=20, help="lines to show per library"
     )
+    parser.add_argument(
+        "--require-all", action="store_true", help="fail if a tool is missing"
+    )
     args = parser.parse_args()
 
     cases = [
@@ -74,11 +81,20 @@ def main() -> None:
     for tool, collect in [("cargo", rust), ("go", go), ("npm", node)]:
         if shutil.which(tool):
             results |= collect()
+        elif args.require_all:
+            sys.exit(f"{tool} isn't on PATH")
         else:
             print(f"skipping {collect.__name__}: {tool} isn't on PATH")
     results |= sbdchd(cases)
 
     print(f"{len(cases)} cases from {FIXTURE.relative_to(HERE.parent)}\n")
+    summary = [
+        f"Agreement with GitHub on {len(cases)} recorded cases:",
+        "",
+        "| Library | Agrees | Lines that differ |",
+        "|---|---|---|",
+    ]
+    failed = False
     for name, verdicts in results.items():
         assert len(verdicts) == len(cases), (name, len(verdicts))
         # A rejected line owns nothing, like on GitHub.
@@ -100,6 +116,17 @@ def main() -> None:
         if len(by_line) > args.limit:
             print(f"  ... and {len(by_line) - args.limit} more lines")
         print()
+        summary.append(
+            f"| {name} | {len(cases) - len(diffs)}/{len(cases)} | {len(by_line)} |"
+        )
+        if name == "codeowners-stats" and diffs:
+            failed = True
+
+    if path := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(path, "a", encoding="utf-8") as f:
+            f.write("\n".join(summary) + "\n")
+    if failed:
+        sys.exit("codeowners-stats disagrees with GitHub")
 
 
 if __name__ == "__main__":
