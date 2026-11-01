@@ -355,3 +355,26 @@ fn owner_of_treats_directories_as_directories() {
         .join("\n")
     );
 }
+
+#[test]
+fn warns_when_github_ignores_rules_for_an_empty_codeowners() {
+    let repo = repo("ignored");
+    std::fs::write(repo.0.join(".github/CODEOWNERS"), "\n").unwrap();
+    std::fs::write(repo.0.join("CODEOWNERS"), "* @acme/platform\n").unwrap();
+    let warning = ".github/CODEOWNERS has no rules, but GitHub uses it instead of CODEOWNERS, so no file has an owner";
+    let (status, stdout, stderr) = run(&repo, &[]);
+    assert_eq!(status, 0);
+    assert!(
+        stdout.starts_with(".github/CODEOWNERS: 0 rules"),
+        "{stdout}"
+    );
+    assert_eq!(stderr, format!("gh-codeowners: warning: {warning}\n"));
+    let (_, stdout, _) = run(&repo, &["--errors"]);
+    assert_eq!(
+        stdout,
+        ".github/CODEOWNERS: warning: this file has no rules, but GitHub uses it instead of CODEOWNERS, so no file has an owner\n"
+    );
+    // Not for a file named with --codeowners, which GitHub may not use.
+    let (_, _, stderr) = run(&repo, &["--codeowners", ".github/CODEOWNERS"]);
+    assert_eq!(stderr, "");
+}

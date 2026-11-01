@@ -4,7 +4,7 @@ use std::process::ExitCode;
 
 use gh_codeowners::codeowners::{
     CodeownersRule, LineProblem, MAX_CODEOWNERS_BYTES, find_codeowners, find_problems,
-    find_repo_root, parse_codeowners, repo_root_for_codeowners,
+    find_repo_root, ignored_codeowners, parse_codeowners, repo_root_for_codeowners,
 };
 use gh_codeowners::counter::Rule;
 use gh_codeowners::report::{
@@ -146,6 +146,8 @@ struct Loaded {
     codeowners: PathBuf,
     root: PathBuf,
     text: String,
+    // A CODEOWNERS file GitHub ignores, because the one it uses has no rules.
+    ignored: Option<PathBuf>,
 }
 
 fn is_stdin(path: &Path) -> bool {
@@ -182,10 +184,15 @@ fn load(args: &Args) -> Result<Loaded, String> {
         std::fs::read_to_string(&codeowners)
             .map_err(|e| format!("{}: {e}", codeowners.display()))?
     };
+    let ignored = match args.codeowners {
+        Some(_) => None,
+        None => ignored_codeowners(&root, &text),
+    };
     Ok(Loaded {
         codeowners,
         root,
         text,
+        ignored,
     })
 }
 
@@ -194,17 +201,31 @@ fn display_path(loaded: &Loaded) -> String {
     if is_stdin(&loaded.codeowners) {
         return "<stdin>".to_string();
     }
-    let codeowners = absolute(&loaded.codeowners);
-    // Inside the repository, it's a repository path, written with `/` like
-    // the paths of the files it owns.
-    match codeowners.strip_prefix(absolute(&loaded.root)) {
+    repo_display(&loaded.root, &loaded.codeowners)
+}
+
+/// `path` relative to `root`, for messages. Inside the repository, it's a
+/// repository path, written with `/` like the paths of the files it owns.
+fn repo_display(root: &Path, path: &Path) -> String {
+    let path = absolute(path);
+    match path.strip_prefix(absolute(root)) {
         Ok(relative) => relative
             .components()
             .map(|c| c.as_os_str().to_string_lossy())
             .collect::<Vec<_>>()
             .join("/"),
-        Err(_) => codeowners.display().to_string(),
+        Err(_) => path.display().to_string(),
     }
+}
+
+/// A warning that GitHub ignores another CODEOWNERS file's rules, about
+/// `subject`, the file GitHub uses.
+fn ignored_warning(loaded: &Loaded, subject: &str) -> Option<String> {
+    let ignored = loaded.ignored.as_ref()?;
+    let ignored = repo_display(&loaded.root, ignored);
+    Some(format!(
+        "{subject} has no rules, but GitHub uses it instead of {ignored}, so no file has an owner"
+    ))
 }
 
 fn check_size(loaded: &Loaded) -> Result<(), String> {
@@ -235,6 +256,7 @@ fn stats_for(args: &Args, loaded: Loaded) -> Result<Stats, String> {
         codeowners,
         root,
         text,
+        ..
     } = loaded;
     let rules = parse_codeowners(&text);
     let threads = args
@@ -489,7 +511,17 @@ fn format_problems(loaded: &Loaded, problems: &[LineProblem], json: bool) -> Str
 fn run(args: &Args) -> Result<ExitCode, String> {
     let loaded = load(args)?;
     if args.errors {
-        let problems = find_problems(&loaded.text);
+        let mut problems = find_problems(&loaded.text);
+        if let Some(message) = ignored_warning(&loaded, "this file") {
+            problems.insert(
+                0,
+                LineProblem {
+                    lineno: None,
+                    error: false,
+                    message,
+                },
+            );
+        }
         println!("{}", format_problems(&loaded, &problems, args.json));
         let failed = args.check && problems.iter().any(|p| p.error);
         return Ok(if failed {
@@ -497,6 +529,10 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         } else {
             ExitCode::SUCCESS
         });
+    }
+    // On stderr, so it doesn't mix with output meant for other programs.
+    if let Some(message) = ignored_warning(&loaded, &display_path(&loaded)) {
+        eprintln!("gh-codeowners: warning: {message}");
     }
     if !args.owner_of.is_empty() {
         let files = ownership(args, &loaded)?;

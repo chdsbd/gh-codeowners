@@ -24,6 +24,21 @@ pub fn find_codeowners(root: &Path) -> Option<PathBuf> {
         .find(|path| path.exists())
 }
 
+/// A CODEOWNERS file with rules that GitHub ignores for `root`, because the
+/// one it uses, whose text is `used`, has none. GitHub uses the first file
+/// it finds, even one that's empty or only comments.
+pub fn ignored_codeowners(root: &Path, used: &str) -> Option<PathBuf> {
+    if lines(used).next().is_some() {
+        return None;
+    }
+    CODEOWNERS_LOCATIONS
+        .iter()
+        .map(|location| root.join(location))
+        .filter(|path| path.exists())
+        .skip(1)
+        .find(|path| std::fs::read_to_string(path).is_ok_and(|text| lines(&text).next().is_some()))
+}
+
 /// The root of the git repository containing `dir`: the nearest directory
 /// with a `.git` directory, or a `.git` file, as in worktrees and submodules.
 pub fn find_repo_root(dir: &Path) -> Option<PathBuf> {
@@ -268,6 +283,32 @@ mod tests {
     #[test]
     fn skips_lines_with_an_invalid_owner() {
         assert!(parse_codeowners("/api/ @acme/api not-an-owner\n").is_empty());
+    }
+
+    #[test]
+    fn finds_rules_github_ignores_for_an_empty_codeowners() {
+        let root =
+            std::env::temp_dir().join(format!("gh-codeowners-ignored-{}", std::process::id()));
+        let write = |file: &str, text: &str| {
+            let path = root.join(file);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        // GitHub uses an empty, blank or comment-only .github/CODEOWNERS,
+        // and gives no file an owner, as checked in a test repository.
+        write("CODEOWNERS", "");
+        write("docs/CODEOWNERS", "* @acme/docs\n");
+        for used in ["", "\n", "# no rules\n"] {
+            assert_eq!(
+                ignored_codeowners(&root, used),
+                Some(root.join("docs/CODEOWNERS")),
+                "{used:?}"
+            );
+        }
+        assert_eq!(ignored_codeowners(&root, "* @acme/x\n"), None);
+        write("docs/CODEOWNERS", "# nothing\n");
+        assert_eq!(ignored_codeowners(&root, ""), None);
+        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]
