@@ -33,6 +33,34 @@ Or with Cargo, which installs the `gh-codeowners` command:
 cargo install --git https://github.com/chdsbd/gh-codeowners
 ```
 
+## GitHub CLI extension
+
+Installed as an extension, it runs as `gh codeowners`, with the same options as `gh-codeowners`:
+
+```
+gh codeowners --unused
+gh codeowners --owner-of src/app.ts
+gh codeowners --errors
+```
+
+`gh extension install` downloads the binary for your platform from the latest release. There are binaries for macOS, Linux and Windows, each on x86-64 and ARM64. To install a specific version, update, or uninstall:
+
+```
+gh extension install chdsbd/gh-codeowners --pin v0.1.0
+gh extension upgrade codeowners
+gh extension remove codeowners
+```
+
+To try a local build as the extension, build it into the repository root, where `gh` looks for an executable named like the repository, then install the directory:
+
+```
+cargo build --release
+cp target/release/gh-codeowners .
+gh extension install .
+```
+
+`gh extension install .` links the directory rather than copying it, so rebuilding and copying the binary again updates the extension. `gh extension remove codeowners` unlinks it.
+
 ## CLI
 
 ```
