@@ -262,10 +262,74 @@ pub enum Matcher {
         name: Vec<u8>,
         dir_only: bool,
     },
+    // Names directly in a directory, from an anchored pattern whose last
+    // segment's only wildcards are `*`s, like `/src/*.test.*`.
+    Glob {
+        // The directory, with a trailing slash, or empty for the root.
+        dir: Vec<u8>,
+        // The last segment split at its `*`s.
+        parts: Vec<Vec<u8>>,
+        dir_only: bool,
+        // Patterns ending in `/*` don't match directories.
+        files_only: bool,
+    },
     Regex {
         pattern: String,
         regex: OnceLock<Option<regex::bytes::Regex>>,
     },
+}
+
+/// The `Glob` matcher for `pattern`, if it has that shape.
+fn glob(pattern: &str) -> Option<Matcher> {
+    if !is_anchored(pattern) || pattern.contains(['?', '\\']) {
+        return None;
+    }
+    let dir_only = is_dir_only(pattern);
+    let trimmed = pattern.strip_suffix('/').unwrap_or(pattern);
+    let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
+    let (dir, name) = match trimmed.rsplit_once('/') {
+        Some((dir, name)) => (dir, name),
+        None => ("", trimmed),
+    };
+    // `**` alone is a recursive wildcard, not two `*`s.
+    if dir.contains('*') || !name.contains('*') || name == "**" {
+        return None;
+    }
+    Some(Matcher::Glob {
+        dir: if dir.is_empty() {
+            Vec::new()
+        } else {
+            format!("{dir}/").into_bytes()
+        },
+        parts: name
+            .split('*')
+            .map(|part| part.as_bytes().to_vec())
+            .collect(),
+        dir_only,
+        files_only: pattern.ends_with("/*"),
+    })
+}
+
+/// Whether `name` matches the `*`-separated `parts`, with each `*` matching
+/// any run of bytes. A segment of only `*`s can't match an empty name.
+fn glob_match(parts: &[Vec<u8>], name: &[u8]) -> bool {
+    let (first, last) = (&parts[0], &parts[parts.len() - 1]);
+    if name.is_empty()
+        || name.len() < first.len() + last.len()
+        || !name.starts_with(first)
+        || !name.ends_with(last)
+    {
+        return false;
+    }
+    // Leftmost matches of the middle parts leave the most room for the rest.
+    let mut rest = &name[first.len()..name.len() - last.len()];
+    for part in &parts[1..parts.len() - 1] {
+        match memchr::memmem::find(rest, part) {
+            Some(i) => rest = &rest[i + part.len()..],
+            None => return false,
+        }
+    }
+    true
 }
 
 impl Matcher {
@@ -281,6 +345,9 @@ impl Matcher {
         }
         if pattern == "*" {
             return Matcher::Always;
+        }
+        if let Some(matcher) = glob(pattern) {
+            return matcher;
         }
         if pattern.contains(['*', '?', '\\']) {
             return Matcher::Regex {
@@ -323,6 +390,18 @@ impl Matcher {
                     && trimmed.ends_with(name)
                     && (trimmed.len() == name.len()
                         || trimmed[trimmed.len() - name.len() - 1] == b'/')
+            }
+            Matcher::Glob {
+                dir,
+                parts,
+                dir_only,
+                files_only,
+            } => {
+                (is_dir || !dir_only)
+                    && !(is_dir && *files_only)
+                    && trimmed.starts_with(dir)
+                    && !trimmed[dir.len()..].contains(&b'/')
+                    && glob_match(parts, &trimmed[dir.len()..])
             }
             Matcher::Regex { pattern, regex } => regex
                 .get_or_init(|| compile(pattern))
@@ -495,6 +574,77 @@ mod tests {
             "a\\]b/c\\[d",
         ] {
             assert!(compile(pattern).is_some(), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn globs_match_like_their_regexes() {
+        let paths: [&[u8]; 24] = [
+            b"src",
+            b"src/",
+            b"src/a",
+            b"src/a/",
+            b"src/a.c",
+            b"src/a.c/",
+            b"src/x/a.c",
+            b"src/x/a.c/",
+            b"src/acpi",
+            b"src/acpi_thermal.c",
+            b"src/thermal_acpi",
+            b"src/acpiacpi",
+            b"src/aa",
+            b"src/a",
+            b"src/.c",
+            b"Src/a.c",
+            b"x/src/a.c",
+            b"a.c",
+            b"a.c/",
+            b"ab/",
+            b"a/b",
+            b"src/\xc3\xa9.c",
+            b"src/a*b",
+            b"",
+        ];
+        for pattern in [
+            "/src/*",
+            "src/*",
+            "/src/*/",
+            "/src/*.c",
+            "/src/*.c/",
+            "/src/a*",
+            "/src/*acpi*",
+            "/src/*acpi*/",
+            "/src/a*a*",
+            "/src/a*c*a",
+            "/src/**.c",
+            "/src/a**",
+            "/*",
+            "/*/",
+            "/*.c",
+            "/a*",
+            "/src/é*",
+            "src/x/*",
+        ] {
+            let matcher = Matcher::new(pattern);
+            assert!(matches!(matcher, Matcher::Glob { .. }), "{pattern}");
+            let regex = compile(pattern).unwrap();
+            for path in paths {
+                assert_eq!(
+                    matcher.is_match(path),
+                    regex.is_match(path),
+                    "{pattern} {}",
+                    String::from_utf8_lossy(path)
+                );
+            }
+        }
+        // Other wildcards still use regexes.
+        for pattern in [
+            "/src/**", "/src/*/a", "/src/a?", "*.c", "src*", "/\\#*", "!a*",
+        ] {
+            assert!(
+                matches!(Matcher::new(pattern), Matcher::Regex { .. }),
+                "{pattern}"
+            );
         }
     }
 
