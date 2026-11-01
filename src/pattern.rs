@@ -262,10 +262,90 @@ pub enum Matcher {
         name: Vec<u8>,
         dir_only: bool,
     },
+    // A pattern whose wildcards are `*`s and `?`s, matched a segment at a
+    // time, like `/drivers/*/*acpi*` or `*_test?.py`.
+    Glob {
+        // The leading directories without wildcards, each with a trailing
+        // slash. None for a pattern without a slash, which matches a name at
+        // any depth.
+        dir: Option<Vec<u8>>,
+        // The rest of the path, one glob per segment.
+        segments: Vec<Vec<u8>>,
+        dir_only: bool,
+        // Patterns ending in `/*` don't match directories.
+        files_only: bool,
+    },
     Regex {
         pattern: String,
         regex: OnceLock<Option<regex::bytes::Regex>>,
     },
+}
+
+/// The `Glob` matcher for `pattern`, if it has that shape: wildcards, but
+/// no escapes or `**` segments.
+fn glob(pattern: &str) -> Option<Matcher> {
+    if pattern.contains('\\') || !pattern.contains(['*', '?']) {
+        return None;
+    }
+    let trimmed = pattern.strip_suffix('/').unwrap_or(pattern);
+    let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
+    let segments: Vec<&str> = trimmed.split('/').collect();
+    // `**` alone is a recursive wildcard, not two `*`s.
+    if segments.contains(&"**") {
+        return None;
+    }
+    let literal = segments
+        .iter()
+        .take_while(|segment| !segment.contains(['*', '?']))
+        .count();
+    let dir: String = segments[..literal]
+        .iter()
+        .map(|s| format!("{s}/"))
+        .collect();
+    Some(Matcher::Glob {
+        dir: is_anchored(pattern).then(|| dir.into_bytes()),
+        segments: segments[literal..]
+            .iter()
+            .map(|segment| segment.as_bytes().to_vec())
+            .collect(),
+        dir_only: is_dir_only(pattern),
+        files_only: pattern.ends_with("/*"),
+    })
+}
+
+/// Whether `name`, one path segment, matches `glob`, where `*` matches any
+/// run of bytes and `?` one byte. A glob of only `*`s can't match an empty
+/// name.
+fn segment_match(glob: &[u8], name: &[u8]) -> bool {
+    if glob.iter().all(|&c| c == b'*') {
+        return !name.is_empty();
+    }
+    let (mut g, mut n) = (0, 0);
+    // After a mismatch, retry from the last `*`, letting it match one more
+    // byte. Trying the shortest match for each `*` first finds a match if
+    // there is one.
+    let mut retry: Option<(usize, usize)> = None;
+    while n < name.len() {
+        match glob.get(g) {
+            Some(b'*') => {
+                retry = Some((g, n));
+                g += 1;
+            }
+            Some(&c) if c == b'?' || c == name[n] => {
+                g += 1;
+                n += 1;
+            }
+            _ => match retry {
+                Some((star, start)) => {
+                    retry = Some((star, start + 1));
+                    g = star + 1;
+                    n = start + 1;
+                }
+                None => return false,
+            },
+        }
+    }
+    glob[g..].iter().all(|&c| c == b'*')
 }
 
 impl Matcher {
@@ -281,6 +361,9 @@ impl Matcher {
         }
         if pattern == "*" {
             return Matcher::Always;
+        }
+        if let Some(matcher) = glob(pattern) {
+            return matcher;
         }
         if pattern.contains(['*', '?', '\\']) {
             return Matcher::Regex {
@@ -323,6 +406,30 @@ impl Matcher {
                     && trimmed.ends_with(name)
                     && (trimmed.len() == name.len()
                         || trimmed[trimmed.len() - name.len() - 1] == b'/')
+            }
+            Matcher::Glob {
+                dir,
+                segments,
+                dir_only,
+                files_only,
+            } => {
+                let rest = match dir {
+                    Some(dir) => match trimmed.strip_prefix(dir.as_slice()) {
+                        Some(rest) => rest,
+                        None => return false,
+                    },
+                    None => {
+                        let slash = trimmed.iter().rposition(|&c| c == b'/');
+                        &trimmed[slash.map_or(0, |i| i + 1)..]
+                    }
+                };
+                let mut names = rest.split(|&c| c == b'/');
+                (is_dir || !dir_only)
+                    && !(is_dir && *files_only)
+                    && segments
+                        .iter()
+                        .all(|glob| names.next().is_some_and(|name| segment_match(glob, name)))
+                    && names.next().is_none()
             }
             Matcher::Regex { pattern, regex } => regex
                 .get_or_init(|| compile(pattern))
@@ -495,6 +602,112 @@ mod tests {
             "a\\]b/c\\[d",
         ] {
             assert!(compile(pattern).is_some(), "{pattern}");
+        }
+    }
+
+    #[test]
+    fn globs_match_like_their_regexes() {
+        let paths: [&[u8]; 36] = [
+            b"src",
+            b"src/",
+            b"src/a",
+            b"src/a/",
+            b"src/a.c",
+            b"src/a.c/",
+            b"src/x/a.c",
+            b"src/x/a.c/",
+            b"src/acpi",
+            b"src/acpi_thermal.c",
+            b"src/thermal_acpi",
+            b"src/acpiacpi",
+            b"src/aa",
+            b"src/a",
+            b"src/.c",
+            b"Src/a.c",
+            b"x/src/a.c",
+            b"a.c",
+            b"a.c/",
+            b"ab/",
+            b"a/b",
+            b"src/\xc3\xa9.c",
+            b"src/a*b",
+            b"",
+            b"src/x/a",
+            b"src/x/a/",
+            b"src/y/a",
+            b"src/x/y/a",
+            b"x/a",
+            b"a/x/",
+            b"src/x/acpi_x.c",
+            b"src/ab",
+            b"src/abc",
+            b"src/a/c",
+            b"src/aXc",
+            b"src/aaab",
+        ];
+        for pattern in [
+            "/src/*",
+            "src/*",
+            "/src/*/",
+            "/src/*.c",
+            "/src/*.c/",
+            "/src/a*",
+            "/src/*acpi*",
+            "/src/*acpi*/",
+            "/src/a*a*",
+            "/src/a*c*a",
+            "/src/**.c",
+            "/src/a**",
+            "/*",
+            "/*/",
+            "/*.c",
+            "/a*",
+            "/src/é*",
+            "src/x/*",
+            "*.c",
+            "*.c/",
+            "a*",
+            "*acpi*",
+            "*a*c*",
+            "**.c",
+            "*/",
+            "/src/*/a",
+            "/src/*/a/",
+            "/src/a?",
+            "/src/a?c",
+            "/src/a?*c",
+            "/src/a*?",
+            "/src/?.c",
+            "/src/*/*acpi*",
+            "/*/*",
+            "/*/x/*",
+            "/a/*/",
+            "src/*/a",
+            "?*",
+            "?.c",
+            "??",
+            "*a*ab",
+        ] {
+            let matcher = Matcher::new(pattern);
+            assert!(matches!(matcher, Matcher::Glob { .. }), "{pattern}");
+            let regex = compile(pattern).unwrap();
+            for path in paths {
+                assert_eq!(
+                    matcher.is_match(path),
+                    regex.is_match(path),
+                    "{pattern} {}",
+                    String::from_utf8_lossy(path)
+                );
+            }
+        }
+        // Other wildcards still use regexes.
+        for pattern in [
+            "/src/**", "/a/**/b", "**", "**/", "/\\#*", "/\\#?/*", "!a*", "!a?",
+        ] {
+            assert!(
+                matches!(Matcher::new(pattern), Matcher::Regex { .. }),
+                "{pattern}"
+            );
         }
     }
 
