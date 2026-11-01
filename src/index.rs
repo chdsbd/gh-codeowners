@@ -157,8 +157,8 @@ impl Index {
         self.map.as_deref().unwrap_or(&[])
     }
 
-    /// Like `for_each_batch`, but parses version 2 and 3 indexes on `threads`
-    /// threads at once, with `on_batch` called from any of them.
+    /// Like `for_each_batch`, but parses on `threads` threads at once, with
+    /// `on_batch` called from any of them.
     ///
     /// Entries vary in length, so each thread past the first guesses where an
     /// entry starts in its part of the file. Guesses are checked once every
@@ -167,6 +167,11 @@ impl Index {
     /// first thread starts at the first entry, that proves every guess right.
     /// Returns false if a check fails, in which case the batches were wrong
     /// and the caller should start over with `for_each_batch`.
+    ///
+    /// Version 4 paths are changes to the previous path, so those are parsed
+    /// twice: once to check the guesses and find the path before each
+    /// thread's part, then again to list the paths. Batches are only sent
+    /// once the checks pass.
     pub fn for_each_batch_parallel(
         &self,
         threads: usize,
@@ -182,7 +187,8 @@ impl Index {
         if threads < 2
             || data.len() < PARALLEL_MIN_BYTES
             || &data[..4] != b"DIRC"
-            || !(2..=3).contains(&version)
+            || !(2..=4).contains(&version)
+            || (version == 4 && threads < PARALLEL_V4_MIN_THREADS)
         {
             self.for_each_batch(batch_size, on_batch)?;
             return Ok(true);
@@ -193,6 +199,9 @@ impl Index {
             hash_size: self.hash_size,
             version,
         };
+        if version == 4 {
+            return parser.parallel_v4(threads, count, batch_size, &on_batch);
+        }
         // Where each thread starts. Entries start 4 bytes past a multiple of 8,
         // since the first starts at 12 and each is padded to a multiple of 8.
         let mut starts = vec![12];
@@ -332,6 +341,9 @@ impl Index {
 
 // Only parse in parallel when there's enough to split.
 const PARALLEL_MIN_BYTES: usize = 4 << 20;
+// Version 4 is parsed twice in parallel, and counting waits for the first
+// pass, so two threads are slower than one.
+const PARALLEL_V4_MIN_THREADS: usize = 3;
 // How many positions to try when looking for an entry to start at.
 const SEARCH_ENTRIES: usize = 1 << 16;
 // How many entries in a row must look valid to start at the first.
@@ -459,6 +471,300 @@ impl EntryParser<'_> {
         }
         segment.end = pos;
         Ok(segment)
+    }
+}
+
+// A version 4 entry, whose path is the previous entry's with `drop` bytes
+// removed from the end and `suffix` added.
+struct EntryV4 {
+    mode: u32,
+    // The path's length, from the flags. None for 0xfff bytes or more.
+    length: Option<usize>,
+    drop: usize,
+    suffix: (usize, usize),
+    next: usize,
+}
+
+impl EntryV4 {
+    fn suffix_len(&self) -> usize {
+        self.suffix.1 - self.suffix.0
+    }
+}
+
+// One thread's part of a parallel version 4 parse.
+struct SegmentV4 {
+    start: usize,
+    end: usize,
+    entries: usize,
+    // The length of the path before `start`.
+    before: usize,
+    // The path at `end`: the first `kept` bytes of the path before `start`,
+    // then `tail`.
+    kept: usize,
+    tail: Vec<u8>,
+}
+
+impl EntryParser<'_> {
+    /// Parse the entry at `pos`, given the previous path's length if known.
+    fn entry_v4(&self, pos: usize, previous: Option<usize>) -> Option<EntryV4> {
+        let fixed = 40 + self.hash_size + 2;
+        let header = self.data.get(pos..pos + fixed)?;
+        let mode = u32::from_be_bytes(header[24..28].try_into().unwrap());
+        if mode > 0o177777 || !matches!(mode & 0o170000, 0o100000 | 0o120000 | 0o160000 | 0o040000)
+        {
+            return None;
+        }
+        let flags = u16::from_be_bytes(header[40 + self.hash_size..fixed].try_into().unwrap());
+        let mut p = pos + fixed;
+        if flags & 0x4000 != 0 {
+            // Only skip-worktree and intent-to-add are defined.
+            let more = self.data.get(p..p + 2)?;
+            if u16::from_be_bytes(more.try_into().unwrap()) & !0x6000 != 0 {
+                return None;
+            }
+            p += 2;
+        }
+        let mut drop = 0usize;
+        for i in 0.. {
+            let byte = *self.data.get(p)?;
+            p += 1;
+            drop = (drop << 7) | usize::from(byte & 0x7f);
+            if byte & 0x80 == 0 {
+                break;
+            }
+            // Longer than any path git allows.
+            if i == 3 {
+                return None;
+            }
+            drop += 1;
+        }
+        let stored = usize::from(flags & 0xfff);
+        // With both lengths, the suffix's length is known, so only its NUL
+        // needs checking.
+        let known = previous
+            .filter(|_| stored < 0xfff)
+            .and_then(|previous| stored.checked_sub(previous.checked_sub(drop)?));
+        let nul = match known {
+            Some(length) if self.data.get(p + length) == Some(&0) => length,
+            Some(_) => return None,
+            None => memchr::memchr(0, self.data.get(p..)?)?,
+        };
+        Some(EntryV4 {
+            mode,
+            length: (stored < 0xfff).then_some(stored),
+            drop,
+            suffix: (p, p + nul),
+            next: p + nul + 1,
+        })
+    }
+
+    // Whether entries chain from `pos`: each path's length, from its flags,
+    // must be the previous length less `drop` plus the suffix.
+    fn looks_like_v4_entries(&self, mut pos: usize) -> bool {
+        let mut length: Option<usize> = None;
+        for _ in 0..CONFIRM_ENTRIES {
+            let Some(entry) = self.entry_v4(pos, length) else {
+                return false;
+            };
+            // Nanoseconds are below a billion.
+            let nanos = |at: usize| u32::from_be_bytes(self.data[at..at + 4].try_into().unwrap());
+            if nanos(pos + 4) >= 1_000_000_000 || nanos(pos + 12) >= 1_000_000_000 {
+                return false;
+            }
+            let Some(new) = entry.length else {
+                return false;
+            };
+            let chains = match length {
+                Some(old) => old.checked_sub(entry.drop) == new.checked_sub(entry.suffix_len()),
+                None => new >= entry.suffix_len(),
+            };
+            if !chains {
+                return false;
+            }
+            length = Some(new);
+            pos = entry.next;
+        }
+        true
+    }
+
+    /// Check entries from `start` until `end`, or until they stop looking
+    /// valid for the last segment, without knowing the path before `start`.
+    fn segment_v4(
+        &self,
+        start: usize,
+        end: Option<usize>,
+        first: bool,
+    ) -> Result<SegmentV4, Error> {
+        // The path before the first entry is empty. Elsewhere, its length
+        // follows from the first entry's.
+        let before = if first {
+            Some(0)
+        } else {
+            self.entry_v4(start, None)
+                .and_then(|e| Some(e.length? - e.suffix_len() + e.drop))
+        };
+        let mut segment = SegmentV4 {
+            start,
+            end: start,
+            entries: 0,
+            before: before.unwrap_or(0),
+            kept: before.unwrap_or(0),
+            tail: Vec::new(),
+        };
+        if before.is_none() {
+            return Ok(segment);
+        }
+        let mut length = segment.before;
+        let mut pos = start;
+        while end.is_none_or(|end| pos < end) {
+            let Some(entry) = self.entry_v4(pos, Some(length)) else {
+                break;
+            };
+            let Some(keep) = length.checked_sub(entry.drop) else {
+                break;
+            };
+            let new = keep + entry.suffix_len();
+            if entry.length.is_some_and(|l| l != new) {
+                break;
+            }
+            if entry.mode & 0o170000 == 0o040000 {
+                return Err(Error::Unsupported("Sparse indexes aren't supported".into()));
+            }
+            if keep < segment.kept {
+                segment.kept = keep;
+                segment.tail.clear();
+            } else {
+                segment.tail.truncate(keep - segment.kept);
+            }
+            segment
+                .tail
+                .extend_from_slice(&self.data[entry.suffix.0..entry.suffix.1]);
+            length = new;
+            pos = entry.next;
+            segment.entries += 1;
+        }
+        segment.end = pos;
+        Ok(segment)
+    }
+
+    /// List the paths from `start` to `end`, checked by `segment_v4`, given
+    /// the path before `start`.
+    fn emit_v4(
+        &self,
+        start: usize,
+        end: usize,
+        mut previous: Vec<u8>,
+        mut first: bool,
+        batch_size: usize,
+        on_batch: &impl Fn(Batch),
+    ) -> Result<(), Error> {
+        let new_batch = || Batch {
+            arena: Vec::with_capacity(batch_size * 32),
+            in_arena: true,
+            spans: Vec::with_capacity(batch_size),
+        };
+        let mut batch = new_batch();
+        let mut pos = start;
+        while pos < end {
+            let entry = self
+                .entry_v4(pos, Some(previous.len()))
+                .ok_or_else(truncated)?;
+            pos = entry.next;
+            let suffix = &self.data[entry.suffix.0..entry.suffix.1];
+            // The same path as the previous entry: another stage.
+            if entry.drop == 0 && suffix.is_empty() && !first {
+                continue;
+            }
+            first = false;
+            let keep = previous
+                .len()
+                .checked_sub(entry.drop)
+                .ok_or_else(truncated)?;
+            previous.truncate(keep);
+            previous.extend_from_slice(suffix);
+            let start = batch.arena.len();
+            batch.arena.extend_from_slice(&previous);
+            batch.spans.push((start, batch.arena.len()));
+            if batch.spans.len() == batch_size {
+                on_batch(std::mem::replace(&mut batch, new_batch()));
+            }
+        }
+        if !batch.is_empty() {
+            on_batch(batch);
+        }
+        Ok(())
+    }
+
+    fn parallel_v4(
+        &self,
+        threads: usize,
+        count: usize,
+        batch_size: usize,
+        on_batch: &(impl Fn(Batch) + Sync),
+    ) -> Result<bool, Error> {
+        let data = self.data;
+        // Entries aren't padded, so any byte can start one.
+        let mut starts = vec![12];
+        for k in 1..threads {
+            let guess = 12 + (data.len() - 12) * k / threads;
+            let found = (guess..data.len().min(guess + SEARCH_ENTRIES * 8))
+                .find(|&candidate| self.looks_like_v4_entries(candidate));
+            if let Some(start) = found
+                && start > *starts.last().unwrap()
+            {
+                starts.push(start);
+            }
+        }
+        let segments: Vec<Result<SegmentV4, Error>> = std::thread::scope(|scope| {
+            let workers: Vec<_> = starts
+                .iter()
+                .enumerate()
+                .map(|(k, &start)| {
+                    let end = starts.get(k + 1).copied();
+                    scope.spawn(move || self.segment_v4(start, end, k == 0))
+                })
+                .collect();
+            workers.into_iter().map(|w| w.join().unwrap()).collect()
+        });
+        let segments = segments.into_iter().collect::<Result<Vec<_>, _>>()?;
+        let entries: usize = segments.iter().map(|s| s.entries).sum();
+        let aligned = segments.windows(2).all(|pair| pair[0].end == pair[1].start);
+        if !aligned || entries != count {
+            return Ok(false);
+        }
+        // The path before each segment is the one at the end of the last.
+        let mut befores = Vec::with_capacity(segments.len());
+        let mut path = Vec::new();
+        for segment in &segments {
+            if segment.before != path.len() {
+                return Ok(false);
+            }
+            befores.push(path.clone());
+            path.truncate(segment.kept);
+            path.extend_from_slice(&segment.tail);
+        }
+        check_extensions(data, segments.last().unwrap().end, self.hash_size)?;
+        std::thread::scope(|scope| {
+            let workers: Vec<_> = segments
+                .iter()
+                .zip(befores)
+                .enumerate()
+                .map(|(k, (segment, before))| {
+                    scope.spawn(move || {
+                        self.emit_v4(
+                            segment.start,
+                            segment.end,
+                            before,
+                            k == 0,
+                            batch_size,
+                            on_batch,
+                        )
+                    })
+                })
+                .collect();
+            workers.into_iter().try_for_each(|w| w.join().unwrap())
+        })?;
+        Ok(true)
     }
 }
 

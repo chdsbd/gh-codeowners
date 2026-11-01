@@ -205,7 +205,7 @@ fn parses_large_indexes_in_parallel() {
         .spawn()
         .unwrap();
     let mut stdin = child.stdin.take().unwrap();
-    for i in 0..60_000 {
+    for i in 0..80_000 {
         let name = "x".repeat(i % 37);
         writeln!(
             stdin,
@@ -221,13 +221,16 @@ fn parses_large_indexes_in_parallel() {
 
     let mut expected = ls_files(&repo.0);
     expected.sort();
-    for version in ["2", "3"] {
+    for version in ["2", "3", "4"] {
         git(&repo.0, &["update-index", "--index-version", version]);
+        // Smaller indexes are parsed on one thread.
+        let size = std::fs::metadata(repo.0.join(".git/index")).unwrap().len();
+        assert!(size > 4 << 20, "version {version} is {size} bytes");
         for threads in [2, 3, 8] {
             let (checked, files) = read_index_parallel(&repo.0, threads);
             assert!(checked, "version {version}, {threads} threads");
             assert_eq!(files, expected, "version {version}, {threads} threads");
         }
     }
-    assert_eq!(count_everything(&repo.0), 60_000);
+    assert_eq!(count_everything(&repo.0), 80_000);
 }
