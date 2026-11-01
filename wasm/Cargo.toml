@@ -10,6 +10,7 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 gh-codeowners = { path = ".." }
+serde = { version = "1.0.229", features = ["derive"] }
 
 [profile.release]
 codegen-units = 1

@@ -15,7 +15,10 @@ use gh_codeowners::codeowners::{
 };
 use gh_codeowners::counter::{Rule, Rules, count};
 use gh_codeowners::owners_of;
-use gh_codeowners::report::{Json, Status, ownership_json, problem_json, rule_json};
+use gh_codeowners::report::{
+    OwnershipJson, ProblemJson, RuleJson, Status, ownership_json, problem_json, rule_json, to_json,
+};
+use serde::Serialize;
 
 thread_local! {
     static OUTPUT: RefCell<Vec<u8>> = const { RefCell::new(Vec::new()) };
@@ -64,22 +67,15 @@ pub unsafe extern "C" fn count_files(
     respond(rules(codeowners).map(|rules| {
         let files: Vec<&[u8]> = paths(files).collect();
         let counts = count(&Rules::new(&rule_list(&rules)), &files, 1);
-        Json::Object(vec![
-            ("files", Json::Number(counts.files)),
-            ("unowned", Json::Number(counts.unowned)),
-            (
-                "rules",
-                Json::Array(
-                    rules
-                        .iter()
-                        .zip(&counts.rules)
-                        .map(|(rule, c)| {
-                            rule_json(rule, c.owned, Status::new(c.owned, c.matches_any))
-                        })
-                        .collect(),
-                ),
-            ),
-        ])
+        to_json(&CountsJson {
+            files: counts.files,
+            unowned: counts.unowned,
+            rules: rules
+                .iter()
+                .zip(&counts.rules)
+                .map(|(rule, c)| rule_json(rule, c.owned, Status::new(c.owned, c.matches_any)))
+                .collect(),
+        })
     }))
 }
 
@@ -103,16 +99,13 @@ pub unsafe extern "C" fn owner_of(
             .map(|path| std::str::from_utf8(path).map_err(|_| "A path isn't UTF-8".to_string()))
             .collect::<Result<Vec<_>, _>>()?;
         let owners = owners_of(&rule_list(&rules), &paths);
-        Ok(Json::Object(vec![(
-            "files",
-            Json::Array(
-                paths
-                    .iter()
-                    .zip(owners)
-                    .map(|(path, rule)| ownership_json(path, rule.map(|i| &rules[i])))
-                    .collect(),
-            ),
-        )]))
+        Ok(to_json(&OwnershipsJson {
+            files: paths
+                .iter()
+                .zip(owners)
+                .map(|(path, rule)| ownership_json(path, rule.map(|i| &rules[i])))
+                .collect(),
+        }))
     }))
 }
 
@@ -125,11 +118,27 @@ pub unsafe extern "C" fn owner_of(
 pub unsafe extern "C" fn problems(codeowners: *const u8, codeowners_len: usize) -> u32 {
     let codeowners = unsafe { bytes(codeowners, codeowners_len) };
     respond(text(codeowners).map(|text| {
-        Json::Object(vec![(
-            "problems",
-            Json::Array(find_problems(text).iter().map(problem_json).collect()),
-        )])
+        to_json(&ProblemsJson {
+            problems: find_problems(text).iter().map(problem_json).collect(),
+        })
     }))
+}
+
+#[derive(Serialize)]
+struct CountsJson<'a> {
+    files: usize,
+    unowned: usize,
+    rules: Vec<RuleJson<'a>>,
+}
+
+#[derive(Serialize)]
+struct OwnershipsJson<'a> {
+    files: Vec<OwnershipJson<'a>>,
+}
+
+#[derive(Serialize)]
+struct ProblemsJson<'a> {
+    problems: Vec<ProblemJson<'a>>,
 }
 
 unsafe fn bytes<'a>(ptr: *const u8, len: usize) -> &'a [u8] {
@@ -169,9 +178,9 @@ fn rule_list(rules: &[CodeownersRule]) -> Vec<Rule> {
         .collect()
 }
 
-fn respond(result: Result<Json, String>) -> u32 {
+fn respond(result: Result<String, String>) -> u32 {
     let (status, output) = match result {
-        Ok(json) => (0, json.format()),
+        Ok(json) => (0, json),
         Err(message) => (1, message),
     };
     OUTPUT.set(output.into_bytes());

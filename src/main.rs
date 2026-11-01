@@ -7,8 +7,11 @@ use gh_codeowners::codeowners::{
     find_repo_root, parse_codeowners, repo_root_for_codeowners,
 };
 use gh_codeowners::counter::Rule;
-use gh_codeowners::report::{Json, Status, ownership_json, problem_json, rule_json};
+use gh_codeowners::report::{
+    OwnershipJson, ProblemJson, RuleJson, Status, ownership_json, problem_json, rule_json, to_json,
+};
 use gh_codeowners::{count_tracked_files, owners_of};
+use serde::Serialize;
 
 const USAGE: &str = "Usage: gh-codeowners [options] [root]
 
@@ -320,27 +323,30 @@ fn format_text(stats: &Stats, rules: &[&RuleStats]) -> String {
     out
 }
 
-fn path_json(path: &Path) -> Json {
-    Json::string(path.to_string_lossy())
+fn path_json(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+#[derive(Serialize)]
+struct CountsJson<'a> {
+    codeowners: String,
+    root: String,
+    files: usize,
+    unowned: usize,
+    rules: Vec<RuleJson<'a>>,
 }
 
 fn format_json(stats: &Stats, rules: &[&RuleStats]) -> String {
-    Json::Object(vec![
-        ("codeowners", path_json(&stats.codeowners)),
-        ("root", path_json(&stats.root)),
-        ("files", Json::Number(stats.files)),
-        ("unowned", Json::Number(stats.unowned)),
-        (
-            "rules",
-            Json::Array(
-                rules
-                    .iter()
-                    .map(|r| rule_json(&r.rule, r.files, r.status))
-                    .collect(),
-            ),
-        ),
-    ])
-    .format()
+    to_json(&CountsJson {
+        codeowners: path_json(&stats.codeowners),
+        root: path_json(&stats.root),
+        files: stats.files,
+        unowned: stats.unowned,
+        rules: rules
+            .iter()
+            .map(|r| rule_json(&r.rule, r.files, r.status))
+            .collect(),
+    })
 }
 
 /// `path` relative to `root`, with `/` separators. Relative paths are
@@ -409,26 +415,27 @@ fn ownership(
         .collect())
 }
 
+#[derive(Serialize)]
+struct OwnershipsJson<'a> {
+    codeowners: String,
+    root: String,
+    files: Vec<OwnershipJson<'a>>,
+}
+
 fn format_ownership(
     loaded: &Loaded,
     files: &[(String, Option<CodeownersRule>)],
     json: bool,
 ) -> String {
     if json {
-        return Json::Object(vec![
-            ("codeowners", path_json(&loaded.codeowners)),
-            ("root", path_json(&loaded.root)),
-            (
-                "files",
-                Json::Array(
-                    files
-                        .iter()
-                        .map(|(path, rule)| ownership_json(path, rule.as_ref()))
-                        .collect(),
-                ),
-            ),
-        ])
-        .format();
+        return to_json(&OwnershipsJson {
+            codeowners: path_json(&loaded.codeowners),
+            root: path_json(&loaded.root),
+            files: files
+                .iter()
+                .map(|(path, rule)| ownership_json(path, rule.as_ref()))
+                .collect(),
+        });
     }
     let display = display_path(loaded);
     let lines: Vec<String> = files
@@ -451,17 +458,19 @@ fn format_ownership(
     lines.join("\n")
 }
 
+#[derive(Serialize)]
+struct ProblemsJson<'a> {
+    codeowners: String,
+    problems: Vec<ProblemJson<'a>>,
+}
+
 fn format_problems(loaded: &Loaded, problems: &[LineProblem], json: bool) -> String {
     let severity = |p: &LineProblem| if p.error { "error" } else { "warning" };
     if json {
-        return Json::Object(vec![
-            ("codeowners", path_json(&loaded.codeowners)),
-            (
-                "problems",
-                Json::Array(problems.iter().map(problem_json).collect()),
-            ),
-        ])
-        .format();
+        return to_json(&ProblemsJson {
+            codeowners: path_json(&loaded.codeowners),
+            problems: problems.iter().map(problem_json).collect(),
+        });
     }
     let display = display_path(loaded);
     if problems.is_empty() {
