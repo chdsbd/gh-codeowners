@@ -85,6 +85,24 @@ fn check_fails_when_a_rule_owns_no_files() {
 }
 
 #[test]
+fn a_closed_stdout_is_not_an_error() {
+    let repo = repo("closed-stdout");
+    let mut child = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
+        .arg("--check")
+        .current_dir(&repo.0)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Close the read end before anything is written, like `| head -0`.
+    drop(child.stdout.take());
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(String::from_utf8(output.stderr).unwrap(), "");
+    // --check's exit code survives the closed pipe.
+    assert_eq!(output.status.code(), Some(1));
+}
+
+#[test]
 fn json_unused_lists_only_rules_that_own_nothing() {
     let (status, stdout, _) = run(&repo("json"), &["--json", "--unused"]);
     assert_eq!(status, 0);

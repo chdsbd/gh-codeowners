@@ -1,4 +1,5 @@
 use std::fmt::Write as _;
+use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -111,11 +112,11 @@ fn parse_args(argv: Vec<String>) -> Result<Parsed, String> {
             "--check" => args.check = true,
             "--json" => args.json = true,
             "-h" | "--help" => {
-                println!("{USAGE}");
+                print_stdout(USAGE)?;
                 return Ok(Parsed::Exit(ExitCode::SUCCESS));
             }
             "-v" | "--version" => {
-                println!("{}", env!("CARGO_PKG_VERSION"));
+                print_stdout(env!("CARGO_PKG_VERSION"))?;
                 return Ok(Parsed::Exit(ExitCode::SUCCESS));
             }
             _ if arg.starts_with('-') && arg.len() > 1 => {
@@ -508,6 +509,17 @@ fn format_problems(loaded: &Loaded, problems: &[LineProblem], json: bool) -> Str
     lines.join("\n")
 }
 
+/// Print a line to stdout. A reader that stops early, like `| head`, closes
+/// the pipe; that isn't an error, so the exit code still reflects the run.
+fn print_stdout(text: &str) -> Result<(), String> {
+    match writeln!(io::stdout().lock(), "{text}") {
+        Err(error) if error.kind() != io::ErrorKind::BrokenPipe => {
+            Err(format!("Couldn't write output: {error}"))
+        }
+        _ => Ok(()),
+    }
+}
+
 fn run(args: &Args) -> Result<ExitCode, String> {
     let loaded = load(args)?;
     if args.errors {
@@ -522,7 +534,7 @@ fn run(args: &Args) -> Result<ExitCode, String> {
                 },
             );
         }
-        println!("{}", format_problems(&loaded, &problems, args.json));
+        print_stdout(&format_problems(&loaded, &problems, args.json))?;
         let failed = args.check && problems.iter().any(|p| p.error);
         return Ok(if failed {
             ExitCode::from(1)
@@ -536,7 +548,7 @@ fn run(args: &Args) -> Result<ExitCode, String> {
     }
     if !args.owner_of.is_empty() {
         let files = ownership(args, &loaded)?;
-        println!("{}", format_ownership(&loaded, &files, args.json));
+        print_stdout(&format_ownership(&loaded, &files, args.json))?;
         return Ok(ExitCode::SUCCESS);
     }
     let stats = stats_for(args, loaded)?;
@@ -545,14 +557,11 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         .iter()
         .filter(|r| !args.unused || r.status != Status::Active)
         .collect();
-    println!(
-        "{}",
-        if args.json {
-            format_json(&stats, &rules)
-        } else {
-            format_text(&stats, &rules)
-        }
-    );
+    print_stdout(&if args.json {
+        format_json(&stats, &rules)
+    } else {
+        format_text(&stats, &rules)
+    })?;
     if args.check && stats.rules.iter().any(|r| r.status != Status::Active) {
         Ok(ExitCode::from(1))
     } else {
