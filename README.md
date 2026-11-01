@@ -133,8 +133,4 @@ git push origin v0.1.0
 
 `cargo test` checks the matcher against every file ownership recorded from GitHub in [`tests/github.txt`](tests/github.txt).
 
-To see how other CODEOWNERS libraries do on the same cases, run [`compare/compare.py`](compare/compare.py) with cargo, go and npm on your PATH. It compares [codeowners-rs](https://github.com/hmarr/codeowners-rs), [hmarr/codeowners](https://github.com/hmarr/codeowners), [sbdchd/codeowners](https://github.com/sbdchd/codeowners) and the [@snyk/github-codeowners](https://github.com/snyk/github-codeowners) fork used by the VS Code extension:
-
-```
-uv run compare/compare.py
-```
+[codeowners-comparison](https://github.com/chdsbd/codeowners-comparison) runs other CODEOWNERS libraries on the same cases.

@@ -1,6 +1,0 @@
-{
-  "private": true,
-  "dependencies": {
-    "@snyk/github-codeowners": "github:chdsbd/github-codeowners#bb24c2adb022a88e03f25a3680a23934a281a5c3"
-  }
-}

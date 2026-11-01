@@ -9,9 +9,9 @@
 # earlier ones. A line GitHub rejects is skipped, as if it weren't there.
 #
 # "Other libraries" notes compare codeowners-rs (Rust), hmarr/codeowners
-# (Go), snyk/github-codeowners (Node) and sbdchd/codeowners (Python). Run
-# `uv run compare/compare.py` to see every case where each disagrees with
-# GitHub.
+# (Go), snyk/github-codeowners (Node) and sbdchd/codeowners (Python). See
+# https://github.com/chdsbd/codeowners-comparison for every case where each
+# disagrees with GitHub.
 
 
 # ---- The usual rules ----
