@@ -262,11 +262,13 @@ pub enum Matcher {
         name: Vec<u8>,
         dir_only: bool,
     },
-    // Names directly in a directory, from an anchored pattern whose last
-    // segment's only wildcards are `*`s, like `/src/*.test.*`.
+    // Names directly in a directory, from a pattern whose last segment's
+    // only wildcards are `*`s, like `/src/*.test.*`, or at any depth for a
+    // pattern without a slash, like `*_test*.py`.
     Glob {
-        // The directory, with a trailing slash, or empty for the root.
-        dir: Vec<u8>,
+        // The directory, with a trailing slash, or empty for the root. None
+        // for any depth.
+        dir: Option<Vec<u8>>,
         // The last segment split at its `*`s.
         parts: Vec<Vec<u8>>,
         dir_only: bool,
@@ -281,7 +283,7 @@ pub enum Matcher {
 
 /// The `Glob` matcher for `pattern`, if it has that shape.
 fn glob(pattern: &str) -> Option<Matcher> {
-    if !is_anchored(pattern) || pattern.contains(['?', '\\']) {
+    if pattern.contains(['?', '\\']) {
         return None;
     }
     let dir_only = is_dir_only(pattern);
@@ -296,10 +298,12 @@ fn glob(pattern: &str) -> Option<Matcher> {
         return None;
     }
     Some(Matcher::Glob {
-        dir: if dir.is_empty() {
-            Vec::new()
+        dir: if !is_anchored(pattern) {
+            None
+        } else if dir.is_empty() {
+            Some(Vec::new())
         } else {
-            format!("{dir}/").into_bytes()
+            Some(format!("{dir}/").into_bytes())
         },
         parts: name
             .split('*')
@@ -397,11 +401,17 @@ impl Matcher {
                 dir_only,
                 files_only,
             } => {
-                (is_dir || !dir_only)
-                    && !(is_dir && *files_only)
-                    && trimmed.starts_with(dir)
-                    && !trimmed[dir.len()..].contains(&b'/')
-                    && glob_match(parts, &trimmed[dir.len()..])
+                let name = match dir {
+                    Some(dir) => match trimmed.strip_prefix(dir.as_slice()) {
+                        Some(name) if !name.contains(&b'/') => name,
+                        _ => return false,
+                    },
+                    None => {
+                        let slash = trimmed.iter().rposition(|&c| c == b'/');
+                        &trimmed[slash.map_or(0, |i| i + 1)..]
+                    }
+                };
+                (is_dir || !dir_only) && !(is_dir && *files_only) && glob_match(parts, name)
             }
             Matcher::Regex { pattern, regex } => regex
                 .get_or_init(|| compile(pattern))
@@ -624,6 +634,13 @@ mod tests {
             "/a*",
             "/src/é*",
             "src/x/*",
+            "*.c",
+            "*.c/",
+            "a*",
+            "*acpi*",
+            "*a*c*",
+            "**.c",
+            "*/",
         ] {
             let matcher = Matcher::new(pattern);
             assert!(matches!(matcher, Matcher::Glob { .. }), "{pattern}");
@@ -639,7 +656,7 @@ mod tests {
         }
         // Other wildcards still use regexes.
         for pattern in [
-            "/src/**", "/src/*/a", "/src/a?", "*.c", "src*", "/\\#*", "!a*",
+            "/src/**", "/src/*/a", "/src/a?", "**", "**/", "?*", "/\\#*", "!a*",
         ] {
             assert!(
                 matches!(Matcher::new(pattern), Matcher::Regex { .. }),
