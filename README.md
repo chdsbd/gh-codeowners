@@ -14,7 +14,11 @@ line  files  pattern
   12      0  /api/auth/  no files match
   20      0  /docs/      every matching file is owned by a later rule
   21      8  *.md
+
+.github/CODEOWNERS:15: error: `acme-api` isn't a valid owner - owners must be @user, @org/team or an email address
 ```
+
+Any lines `--errors` would list, like ones GitHub rejects, follow the counts. A line with an invalid owner isn't counted at all, since GitHub skips it, so this is the only place it shows up.
 
 Files are the ones in git's index: tracked files, which are what GitHub sees once committed. It reads `.git/index` directly on several threads and counts while reading, so a repository with 2 million files and 2,000 rules takes about 60 ms. Indexes it can't read, like split and sparse indexes, fall back to `git ls-files`.
 
@@ -76,8 +80,8 @@ gh-codeowners [options] [root]
   --errors             Instead of counting, list lines GitHub rejects, and
                        lines that likely don't do what they look like
   --unused             Only list rules that own no files
-  --check              Exit with status 1 if any rule owns no files, or with
-                       --errors, if any line has an error
+  --check              Exit with status 1 if any line has an error, or
+                       without --errors, if any rule owns no files
   --json               Print results as JSON
   -j, --threads <n>    Threads to count with (default: one per CPU)
 ```

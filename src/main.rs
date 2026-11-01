@@ -17,7 +17,8 @@ use serde::Serialize;
 const USAGE: &str = "Usage: gh-codeowners [options] [root]
 
 Count the files each CODEOWNERS rule owns, and find rules that own nothing.
-A file counts towards the last rule that matches it, like on GitHub.
+A file counts towards the last rule that matches it, like on GitHub. Any
+lines --errors would list follow the counts.
 
 Arguments:
   root                 Repository root (default: the git repository
@@ -32,8 +33,8 @@ Options:
   --errors             Instead of counting, list lines GitHub rejects, and
                        lines that likely don't do what they look like
   --unused             Only list rules that own no files
-  --check              Exit with status 1 if any rule owns no files, or with
-                       --errors, if any line has an error
+  --check              Exit with status 1 if any line has an error, or
+                       without --errors, if any rule owns no files
   --json               Print results as JSON
   -j, --threads <n>    Threads to count with (default: one per CPU)
   -h, --help           Show this help
@@ -52,6 +53,7 @@ struct Stats {
     files: usize,
     unowned: usize,
     rules: Vec<RuleStats>,
+    problems: Vec<LineProblem>,
 }
 
 struct Args {
@@ -260,6 +262,7 @@ fn stats_for(args: &Args, loaded: Loaded) -> Result<Stats, String> {
         ..
     } = loaded;
     let rules = parse_codeowners(&text);
+    let problems = find_problems(&text);
     let threads = args
         .threads
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
@@ -280,6 +283,7 @@ fn stats_for(args: &Args, loaded: Loaded) -> Result<Stats, String> {
                 status: Status::new(c.owned, c.matches_any),
             })
             .collect(),
+        problems,
     })
 }
 
@@ -346,6 +350,21 @@ fn format_text(stats: &Stats, rules: &[&RuleStats]) -> String {
     out
 }
 
+/// The counts, then any problems, which explain rules that match nothing
+/// and lines GitHub skips, which aren't counted at all.
+fn format_text_with_problems(stats: &Stats, rules: &[&RuleStats]) -> String {
+    let mut out = format_text(stats, rules);
+    if !stats.problems.is_empty() {
+        write!(
+            out,
+            "\n\n{}",
+            problem_lines(&stats.display_path, &stats.problems)
+        )
+        .unwrap();
+    }
+    out
+}
+
 fn path_json(path: &Path) -> String {
     path.to_string_lossy().into_owned()
 }
@@ -357,6 +376,7 @@ struct CountsJson<'a> {
     files: usize,
     unowned: usize,
     rules: Vec<RuleJson<'a>>,
+    problems: Vec<ProblemJson<'a>>,
 }
 
 fn format_json(stats: &Stats, rules: &[&RuleStats]) -> String {
@@ -369,6 +389,7 @@ fn format_json(stats: &Stats, rules: &[&RuleStats]) -> String {
             .iter()
             .map(|r| rule_json(&r.rule, r.files, r.status))
             .collect(),
+        problems: stats.problems.iter().map(problem_json).collect(),
     })
 }
 
@@ -488,7 +509,6 @@ struct ProblemsJson<'a> {
 }
 
 fn format_problems(loaded: &Loaded, problems: &[LineProblem], json: bool) -> String {
-    let severity = |p: &LineProblem| if p.error { "error" } else { "warning" };
     if json {
         return to_json(&ProblemsJson {
             codeowners: path_json(&loaded.codeowners),
@@ -499,6 +519,12 @@ fn format_problems(loaded: &Loaded, problems: &[LineProblem], json: bool) -> Str
     if problems.is_empty() {
         return format!("{display}: no problems");
     }
+    problem_lines(&display, problems)
+}
+
+/// Each problem on its own line, prefixed with the file and line number.
+fn problem_lines(display: &str, problems: &[LineProblem]) -> String {
+    let severity = |p: &LineProblem| if p.error { "error" } else { "warning" };
     let lines: Vec<String> = problems
         .iter()
         .map(|p| match p.lineno {
@@ -560,9 +586,11 @@ fn run(args: &Args) -> Result<ExitCode, String> {
     print_stdout(&if args.json {
         format_json(&stats, &rules)
     } else {
-        format_text(&stats, &rules)
+        format_text_with_problems(&stats, &rules)
     })?;
-    if args.check && stats.rules.iter().any(|r| r.status != Status::Active) {
+    let failed = stats.rules.iter().any(|r| r.status != Status::Active)
+        || stats.problems.iter().any(|p| p.error);
+    if args.check && failed {
         Ok(ExitCode::from(1))
     } else {
         Ok(ExitCode::SUCCESS)

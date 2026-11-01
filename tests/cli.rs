@@ -128,7 +128,8 @@ fn json_unused_lists_only_rules_that_own_nothing() {
       "files": 0,
       "status": "unmatched"
     }
-  ]
+  ],
+  "problems": []
 }
 "#
     );
@@ -294,6 +295,49 @@ fn errors_lists_problems_github_would_have() {
         (status, stdout.as_str()),
         (0, ".github/CODEOWNERS: no problems\n")
     );
+}
+
+#[test]
+fn counting_lists_problems_after_the_counts() {
+    let repo = repo("count-problems");
+    let (status, stdout, _) = run_with_stdin(
+        &repo,
+        &["--codeowners", "-"],
+        "* @acme/all\n[x] @acme/x\n*.md not-an-owner\n",
+    );
+    assert_eq!(status, 0);
+    assert_eq!(
+        stdout,
+        [
+            "<stdin>: 2 rules, 5 files, 0 files with no owner, 1 rule owning no files",
+            "",
+            "line  files  pattern",
+            "   1      5  *",
+            "   2      0  [x]      no files match",
+            "",
+            "<stdin>:2: error: both `[` and `]` must be escaped with a `\\`",
+            "<stdin>:3: error: `not-an-owner` isn't a valid owner - owners must be @user, @org/team or an email address",
+            "",
+        ]
+        .join("\n")
+    );
+    let (_, stdout, _) = run_with_stdin(&repo, &["--codeowners", "-", "--json"], "[x] @acme/x\n");
+    assert!(stdout.contains(r#""severity": "error""#), "{stdout}");
+}
+
+#[test]
+fn check_fails_when_a_line_has_an_error() {
+    let repo = repo("check-errors");
+    // The only rule owns every file, so the invalid owner on line 2 is what
+    // fails the check.
+    let (status, _, _) = run_with_stdin(
+        &repo,
+        &["--codeowners", "-", "--check"],
+        "* @acme/all\n*.md not-an-owner\n",
+    );
+    assert_eq!(status, 1);
+    let (status, _, _) = run_with_stdin(&repo, &["--codeowners", "-", "--check"], "* @acme/all\n");
+    assert_eq!(status, 0);
 }
 
 #[test]
