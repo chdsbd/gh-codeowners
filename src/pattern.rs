@@ -262,15 +262,15 @@ pub enum Matcher {
         name: Vec<u8>,
         dir_only: bool,
     },
-    // Names directly in a directory, from a pattern whose last segment's
-    // only wildcards are `*`s, like `/src/*.test.*`, or at any depth for a
-    // pattern without a slash, like `*_test*.py`.
+    // A pattern whose wildcards are `*`s and `?`s, matched a segment at a
+    // time, like `/drivers/*/*acpi*` or `*_test?.py`.
     Glob {
-        // The directory, with a trailing slash, or empty for the root. None
-        // for any depth.
+        // The leading directories without wildcards, each with a trailing
+        // slash. None for a pattern without a slash, which matches a name at
+        // any depth.
         dir: Option<Vec<u8>>,
-        // The last segment split at its `*`s.
-        parts: Vec<Vec<u8>>,
+        // The rest of the path, one glob per segment.
+        segments: Vec<Vec<u8>>,
         dir_only: bool,
         // Patterns ending in `/*` don't match directories.
         files_only: bool,
@@ -281,59 +281,71 @@ pub enum Matcher {
     },
 }
 
-/// The `Glob` matcher for `pattern`, if it has that shape.
+/// The `Glob` matcher for `pattern`, if it has that shape: wildcards, but
+/// no escapes or `**` segments.
 fn glob(pattern: &str) -> Option<Matcher> {
-    if pattern.contains(['?', '\\']) {
+    if pattern.contains('\\') || !pattern.contains(['*', '?']) {
         return None;
     }
-    let dir_only = is_dir_only(pattern);
     let trimmed = pattern.strip_suffix('/').unwrap_or(pattern);
     let trimmed = trimmed.strip_prefix('/').unwrap_or(trimmed);
-    let (dir, name) = match trimmed.rsplit_once('/') {
-        Some((dir, name)) => (dir, name),
-        None => ("", trimmed),
-    };
+    let segments: Vec<&str> = trimmed.split('/').collect();
     // `**` alone is a recursive wildcard, not two `*`s.
-    if dir.contains('*') || !name.contains('*') || name == "**" {
+    if segments.contains(&"**") {
         return None;
     }
+    let literal = segments
+        .iter()
+        .take_while(|segment| !segment.contains(['*', '?']))
+        .count();
+    let dir: String = segments[..literal]
+        .iter()
+        .map(|s| format!("{s}/"))
+        .collect();
     Some(Matcher::Glob {
-        dir: if !is_anchored(pattern) {
-            None
-        } else if dir.is_empty() {
-            Some(Vec::new())
-        } else {
-            Some(format!("{dir}/").into_bytes())
-        },
-        parts: name
-            .split('*')
-            .map(|part| part.as_bytes().to_vec())
+        dir: is_anchored(pattern).then(|| dir.into_bytes()),
+        segments: segments[literal..]
+            .iter()
+            .map(|segment| segment.as_bytes().to_vec())
             .collect(),
-        dir_only,
+        dir_only: is_dir_only(pattern),
         files_only: pattern.ends_with("/*"),
     })
 }
 
-/// Whether `name` matches the `*`-separated `parts`, with each `*` matching
-/// any run of bytes. A segment of only `*`s can't match an empty name.
-fn glob_match(parts: &[Vec<u8>], name: &[u8]) -> bool {
-    let (first, last) = (&parts[0], &parts[parts.len() - 1]);
-    if name.is_empty()
-        || name.len() < first.len() + last.len()
-        || !name.starts_with(first)
-        || !name.ends_with(last)
-    {
-        return false;
+/// Whether `name`, one path segment, matches `glob`, where `*` matches any
+/// run of bytes and `?` one byte. A glob of only `*`s can't match an empty
+/// name.
+fn segment_match(glob: &[u8], name: &[u8]) -> bool {
+    if glob.iter().all(|&c| c == b'*') {
+        return !name.is_empty();
     }
-    // Leftmost matches of the middle parts leave the most room for the rest.
-    let mut rest = &name[first.len()..name.len() - last.len()];
-    for part in &parts[1..parts.len() - 1] {
-        match memchr::memmem::find(rest, part) {
-            Some(i) => rest = &rest[i + part.len()..],
-            None => return false,
+    let (mut g, mut n) = (0, 0);
+    // After a mismatch, retry from the last `*`, letting it match one more
+    // byte. Trying the shortest match for each `*` first finds a match if
+    // there is one.
+    let mut retry: Option<(usize, usize)> = None;
+    while n < name.len() {
+        match glob.get(g) {
+            Some(b'*') => {
+                retry = Some((g, n));
+                g += 1;
+            }
+            Some(&c) if c == b'?' || c == name[n] => {
+                g += 1;
+                n += 1;
+            }
+            _ => match retry {
+                Some((star, start)) => {
+                    retry = Some((star, start + 1));
+                    g = star + 1;
+                    n = start + 1;
+                }
+                None => return false,
+            },
         }
     }
-    true
+    glob[g..].iter().all(|&c| c == b'*')
 }
 
 impl Matcher {
@@ -397,21 +409,27 @@ impl Matcher {
             }
             Matcher::Glob {
                 dir,
-                parts,
+                segments,
                 dir_only,
                 files_only,
             } => {
-                let name = match dir {
+                let rest = match dir {
                     Some(dir) => match trimmed.strip_prefix(dir.as_slice()) {
-                        Some(name) if !name.contains(&b'/') => name,
-                        _ => return false,
+                        Some(rest) => rest,
+                        None => return false,
                     },
                     None => {
                         let slash = trimmed.iter().rposition(|&c| c == b'/');
                         &trimmed[slash.map_or(0, |i| i + 1)..]
                     }
                 };
-                (is_dir || !dir_only) && !(is_dir && *files_only) && glob_match(parts, name)
+                let mut names = rest.split(|&c| c == b'/');
+                (is_dir || !dir_only)
+                    && !(is_dir && *files_only)
+                    && segments
+                        .iter()
+                        .all(|glob| names.next().is_some_and(|name| segment_match(glob, name)))
+                    && names.next().is_none()
             }
             Matcher::Regex { pattern, regex } => regex
                 .get_or_init(|| compile(pattern))
@@ -589,7 +607,7 @@ mod tests {
 
     #[test]
     fn globs_match_like_their_regexes() {
-        let paths: [&[u8]; 24] = [
+        let paths: [&[u8]; 36] = [
             b"src",
             b"src/",
             b"src/a",
@@ -614,6 +632,18 @@ mod tests {
             b"src/\xc3\xa9.c",
             b"src/a*b",
             b"",
+            b"src/x/a",
+            b"src/x/a/",
+            b"src/y/a",
+            b"src/x/y/a",
+            b"x/a",
+            b"a/x/",
+            b"src/x/acpi_x.c",
+            b"src/ab",
+            b"src/abc",
+            b"src/a/c",
+            b"src/aXc",
+            b"src/aaab",
         ];
         for pattern in [
             "/src/*",
@@ -641,6 +671,22 @@ mod tests {
             "*a*c*",
             "**.c",
             "*/",
+            "/src/*/a",
+            "/src/*/a/",
+            "/src/a?",
+            "/src/a?c",
+            "/src/a?*c",
+            "/src/a*?",
+            "/src/?.c",
+            "/src/*/*acpi*",
+            "/*/*",
+            "/*/x/*",
+            "/a/*/",
+            "src/*/a",
+            "?*",
+            "?.c",
+            "??",
+            "*a*ab",
         ] {
             let matcher = Matcher::new(pattern);
             assert!(matches!(matcher, Matcher::Glob { .. }), "{pattern}");
@@ -656,7 +702,7 @@ mod tests {
         }
         // Other wildcards still use regexes.
         for pattern in [
-            "/src/**", "/src/*/a", "/src/a?", "**", "**/", "?*", "/\\#*", "!a*",
+            "/src/**", "/a/**/b", "**", "**/", "/\\#*", "/\\#?/*", "!a*", "!a?",
         ] {
             assert!(
                 matches!(Matcher::new(pattern), Matcher::Regex { .. }),
