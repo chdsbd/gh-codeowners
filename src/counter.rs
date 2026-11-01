@@ -278,6 +278,7 @@ impl<'a> Counter<'a> {
         let by_parent = frame.by_parent;
         let mut winner = self.last_match(Some(&frame.file_candidates), file, frame.winner);
         winner = self.last_match(by_parent, file, winner);
+        let tested_above = winner;
         winner = self.match_suffixes(&rules.file_index, file, winner);
         self.files += 1;
         if winner == -1 {
@@ -287,8 +288,8 @@ impl<'a> Counter<'a> {
         }
         if self.unmatched > 0 {
             let any = self.stack.last().unwrap().any_file_candidates.clone();
-            self.check_matches(Some(&any), file);
-            self.check_matches(by_parent, file);
+            self.check_matches(Some(&any), file, tested_above);
+            self.check_matches(by_parent, file, tested_above);
         }
     }
 
@@ -336,10 +337,11 @@ impl<'a> Counter<'a> {
         let own_dir_rules = rules.dir_index.by_prefix.get(dir).map(Vec::as_slice);
         let mut winner = self.last_match(Some(&parent_dir), &test_path, parent_winner);
         winner = self.last_match(own_dir_rules, &test_path, winner);
+        let tested_above = winner;
         winner = self.match_suffixes(&rules.dir_index, dir, winner);
         let any_dir_candidates = merge_above(&parent_any_dir, own_dir_rules, -1);
         if self.unmatched > 0 {
-            self.check_matches(Some(&any_dir_candidates), &test_path);
+            self.check_matches(Some(&any_dir_candidates), &test_path, tested_above);
         }
         self.test_path = test_path;
         let own_file_rules = rules.file_index.by_prefix.get(dir).map(Vec::as_slice);
@@ -394,11 +396,17 @@ impl<'a> Counter<'a> {
         winner
     }
 
-    fn check_matches(&mut self, candidates: Option<&[u32]>, path: &[u8]) {
+    /// Record which `candidates` match `path`. Only those up to `tested_above`
+    /// need testing: `last_match` already found that the candidates above it
+    /// don't match. It may be -1, when none matched.
+    fn check_matches(&mut self, candidates: Option<&[u32]>, path: &[u8], tested_above: i64) {
         let Some(candidates) = candidates else {
             return;
         };
         for &i in candidates {
+            if i64::from(i) > tested_above {
+                break;
+            }
             let i = i as usize;
             if !self.matched[i] && self.is_match(i, path) {
                 self.matched[i] = true;
