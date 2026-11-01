@@ -108,6 +108,8 @@ Like on GitHub, a line is skipped if any owner isn't an `@user`, an `@org/team`,
 
 These rules were checked against GitHub itself, by comparing which rule GitHub shows as owning each file in a test repository with thousands of random rules and paths.
 
+[`examples/CODEOWNERS`](examples/CODEOWNERS) is an example file with a commented rule for each of these, and notes on which other CODEOWNERS libraries get it wrong.
+
 ## WebAssembly
 
 [`wasm/`](wasm) builds the library as WebAssembly, for the VS Code extension on platforms without the native CLI. WebAssembly can't read git's index, so the caller passes the list of files, like `git ls-files -z` prints it. See [`wasm/src/lib.rs`](wasm/src/lib.rs) for the interface.
