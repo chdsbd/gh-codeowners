@@ -47,10 +47,10 @@ gh codeowners <command> [flags]
 ### Find a file's owner
 
 ```bash
-gh codeowners view app.ts components
+gh codeowners view app.ts components/button.tsx
 
 src/app.ts: @acme/web, from .github/CODEOWNERS:5 /src/
-src/components/: @acme/design, from .github/CODEOWNERS:6 /src/components/
+src/components/button.tsx: @acme/design, from .github/CODEOWNERS:6 /src/components/
 ```
 
 ### Check CODEOWNERS for errors
