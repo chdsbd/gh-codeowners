@@ -5,7 +5,7 @@ Count the files each [CODEOWNERS](https://docs.github.com/en/repositories/managi
 A file counts towards the last rule that matches it, like on GitHub, so a rule can match files and still own none of them.
 
 ```
-$ gh-codeowners
+$ gh codeowners list
 .github/CODEOWNERS: 12 rules, 163 files, 0 files with no owner, 2 rules owning no files
 
 line  files  pattern
@@ -14,7 +14,11 @@ line  files  pattern
   12      0  /api/auth/  no files match
   20      0  /docs/      every matching file is owned by a later rule
   21      8  *.md
+
+.github/CODEOWNERS:15: error: `acme-api` isn't a valid owner - owners must be @user, @org/team or an email address
 ```
+
+Any problems `gh codeowners check` would report, like lines GitHub rejects, follow the counts. A line with an invalid owner isn't counted at all, since GitHub skips it, so this is the only place it shows up.
 
 Files are the ones in git's index: tracked files, which are what GitHub sees once committed. It reads `.git/index` directly on several threads and counts while reading, so a repository with 2 million files and 2,000 rules takes about 60 ms. Indexes it can't read, like split and sparse indexes, fall back to `git ls-files`.
 
@@ -24,7 +28,7 @@ As a [GitHub CLI](https://cli.github.com) extension, which downloads a prebuilt 
 
 ```
 gh extension install chdsbd/gh-codeowners
-gh codeowners
+gh codeowners list
 ```
 
 Or with Cargo, which installs the `gh-codeowners` command:
@@ -35,12 +39,12 @@ cargo install --git https://github.com/chdsbd/gh-codeowners
 
 ## GitHub CLI extension
 
-Installed as an extension, it runs as `gh codeowners`, with the same options as `gh-codeowners`:
+Installed as an extension, it runs as `gh codeowners`, with the same commands as `gh-codeowners`:
 
 ```
-gh codeowners --unused
-gh codeowners --owner-of src/app.ts
-gh codeowners --errors
+gh codeowners list --unused
+gh codeowners view src/app.ts
+gh codeowners check
 ```
 
 `gh extension install` downloads the binary for your platform from the latest release. There are binaries for macOS, Linux and Windows, each on x86-64 and ARM64. To install a specific version, update, or uninstall:
@@ -64,29 +68,28 @@ gh extension install .
 ## CLI
 
 ```
-gh-codeowners [options] [root]
+gh codeowners <command> [flags]
 
-  root                 Repository root (default: the git repository
-                       containing the current directory)
+  check   Check CODEOWNERS for lines GitHub rejects, and with --unused, rules
+          that own no files. Exits with status 1 if there are errors.
+  list    List each rule with how many files it owns
+  view    Show the rule that owns each path
+
   --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one
                        GitHub would use)
-  --owner-of <path>    Instead of counting, print the rule that owns a file,
-                       which needn't be tracked. Relative paths are relative
-                       to the current directory. Repeat for more files.
-  --errors             Instead of counting, list lines GitHub rejects, and
-                       lines that likely don't do what they look like
-  --unused             Only list rules that own no files
-  --check              Exit with status 1 if any rule owns no files, or with
-                       --errors, if any line has an error
-  --json               Print results as JSON
-  -j, --threads <n>    Threads to count with (default: one per CPU)
+  --root <dir>         Repository root (default: the git repository
+                       containing the current directory)
+  --json <fields>      Output JSON with the specified fields, like gh. Without
+                       fields, lists the ones the command has.
 ```
+
+`gh codeowners <command> --help` shows each command's flags and JSON fields.
 
 It works from any directory in the repository. To find who owns a file, like GitHub shows when you hover over its code owners icon, or a directory:
 
 ```
 $ cd src
-$ gh-codeowners --owner-of app.ts --owner-of components
+$ gh codeowners view app.ts components
 src/app.ts: @acme/web, from .github/CODEOWNERS:5 /src/
 src/components/: @acme/design, from .github/CODEOWNERS:6 /src/components/
 ```
@@ -94,15 +97,15 @@ src/components/: @acme/design, from .github/CODEOWNERS:6 /src/components/
 To check CODEOWNERS for mistakes, including lines GitHub accepts but that never match:
 
 ```
-$ gh-codeowners --errors
+$ gh codeowners check
 .github/CODEOWNERS:7: error: both `[` and `]` must be escaped with a `\`
 .github/CODEOWNERS:9: warning: `!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories
 ```
 
-To fail CI when CODEOWNERS has dead rules:
+To fail CI when CODEOWNERS has errors or dead rules:
 
 ```
-gh-codeowners --check --unused
+gh codeowners check --unused
 ```
 
 ## Library
