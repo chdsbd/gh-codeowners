@@ -1,71 +1,30 @@
 # gh-codeowners
 
-Count the files each [CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners) rule owns, and find rules that own nothing.
+A CLI for [GitHub CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
 
-A file counts towards the last rule that matches it, like on GitHub, so a rule can match files and still own none of them.
-
-```
-$ gh codeowners list
-.github/CODEOWNERS: 12 rules, 163 files, 0 files with no owner, 2 rules owning no files
-
-line  files  pattern
-   2      3  *
-   5     40  /web/
-  12      0  /api/auth/  no files match
-  20      0  /docs/      every matching file is owned by a later rule
-  21      8  *.md
-
-.github/CODEOWNERS:15: error: `acme-api` isn't a valid owner - owners must be @user, @org/team or an email address
-```
-
-Any problems `gh codeowners check` would report, like lines GitHub rejects, follow the counts. A line with an invalid owner isn't counted at all, since GitHub skips it, so this is the only place it shows up.
-
-Files are the ones in git's index: tracked files, which are what GitHub sees once committed. It reads `.git/index` directly on several threads and counts while reading, so a repository with 2 million files and 2,000 rules takes about 60 ms. Indexes it can't read, like split and sparse indexes, fall back to `git ls-files`.
+Find a file's owner, count the files owned by a rule, and find errors in your CODEOWNERS file.
 
 ## Install
 
-As a [GitHub CLI](https://cli.github.com) extension, which downloads a prebuilt binary:
+As a [GitHub CLI](https://cli.github.com) extension (recommended):
 
-```
+```bash
 gh extension install chdsbd/gh-codeowners
+
+# call as `gh codeowners` instead of `gh-codeowners`
 gh codeowners list
-```
-
-Or with Cargo, which installs the `gh-codeowners` command:
-
-```
-cargo install --git https://github.com/chdsbd/gh-codeowners
-```
-
-## GitHub CLI extension
-
-Installed as an extension, it runs as `gh codeowners`, with the same commands as `gh-codeowners`:
-
-```
 gh codeowners list --unused
 gh codeowners view src/app.ts
 gh codeowners check
 ```
 
-`gh extension install` downloads the binary for your platform from the latest release. There are binaries for macOS, Linux and Windows, each on x86-64 and ARM64. To install a specific version, update, or uninstall:
+Or with Cargo, which installs the `gh-codeowners` command:
 
-```
-gh extension install chdsbd/gh-codeowners --pin v0.1.0
-gh extension upgrade codeowners
-gh extension remove codeowners
+```bash
+cargo install --git https://github.com/chdsbd/gh-codeowners
 ```
 
-To try a local build as the extension, build it into the repository root, where `gh` looks for an executable named like the repository, then install the directory:
-
-```
-cargo build --release
-cp target/release/gh-codeowners .
-gh extension install .
-```
-
-`gh extension install .` links the directory rather than copying it, so rebuilding and copying the binary again updates the extension. `gh extension remove codeowners` unlinks it.
-
-## CLI
+## Usage
 
 ```
 gh codeowners <command> [flags]
@@ -85,83 +44,30 @@ gh codeowners <command> [flags]
 
 `gh codeowners <command> --help` shows each command's flags and JSON fields.
 
-It works from any directory in the repository. To find who owns a file, like GitHub shows when you hover over its code owners icon, or a directory:
+### Find a file's owner
 
-```
-$ cd src
-$ gh codeowners view app.ts components
+```bash
+gh codeowners view app.ts components
+
 src/app.ts: @acme/web, from .github/CODEOWNERS:5 /src/
 src/components/: @acme/design, from .github/CODEOWNERS:6 /src/components/
 ```
 
-To check CODEOWNERS for mistakes, including lines GitHub accepts but that never match:
+### Check CODEOWNERS for errors
 
-```
-$ gh codeowners check
+```bash
+gh codeowners check
+
 .github/CODEOWNERS:7: error: both `[` and `]` must be escaped with a `\`
 .github/CODEOWNERS:9: warning: `!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories
 ```
 
-To fail CI when CODEOWNERS has errors or dead rules:
+### Fail CI on errors or dead rules
 
-```
+```bash
 gh codeowners check --unused
 ```
 
-## Library
-
-```rust
-use gh_codeowners::codeowners::parse_codeowners;
-use gh_codeowners::count_tracked_files;
-use gh_codeowners::counter::Rule;
-
-let rules: Vec<Rule> = parse_codeowners(&text)
-    .into_iter()
-    .map(|r| Rule { pattern: r.pattern, lineno: r.lineno })
-    .collect();
-let counts = count_tracked_files(root, &rules, threads)?;
-for rule in &counts.rules {
-    println!("{} {} {}", rule.lineno, rule.owned, rule.matches_any);
-}
-```
-
-`lineno` is zero-based. A rule with `owned == 0` and `matches_any` is overridden by later rules; without `matches_any`, it matches nothing.
-
 ## Matching
 
-Patterns are matched like on GitHub: by [gitignore rules](https://git-scm.com/docs/gitignore#_pattern_format), with [GitHub's exceptions](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners#codeowners-syntax). Paths are case-sensitive, a pattern ending in `/*` doesn't match files in subdirectories, one ending in `/**/` matches files too, and `?` matches one byte, so `??` matches `é`. There are no character ranges: `[` and `]` must be escaped as `\[` and `\]`.
-
-There's no negation either. A `!` pattern without a slash matches file names like the pattern without the `!` would, but not directories, so `!foo` owns `x/foo` but not `foo/bar`. In a pattern with a slash, `!` is an ordinary character, so `!a/` owns `!a/b`.
-
-Lines GitHub rejects as invalid own nothing, such as ones with an unescaped bracket, a `\` before anything but a space, tab, `#`, `[`, `]` or `\`, or `***`. So do a few lines GitHub accepts but never matches: a different number of `\[`s and `\]`s, and a pattern starting with `\[` that has no slash.
-
-Like on GitHub, a line is skipped if any owner isn't an `@user`, an `@org/team`, or an email address with a dot in its domain. Users and teams that don't exist don't make a line invalid. GitHub ignores a CODEOWNERS file over 3 MiB (its docs say 3 MB), so `gh-codeowners` reports an error for one. GitHub uses the first CODEOWNERS file it finds in `.github/`, the root, then `docs/`, even one that's empty or only comments, so `gh-codeowners` warns when that leaves a later file's rules unused.
-
-These rules were checked against GitHub itself, by comparing which rule GitHub shows as owning each file in a test repository with thousands of random rules and paths.
-
-[`examples/CODEOWNERS`](examples/CODEOWNERS) is an example file with a commented rule for each of these, and notes on which other CODEOWNERS libraries get it wrong.
-
-## WebAssembly
-
-[`wasm/`](wasm) builds the library as WebAssembly, for the VS Code extension on platforms without the native CLI. WebAssembly can't read git's index, so the caller passes the list of files, like `git ls-files -z` prints it. See [`wasm/src/lib.rs`](wasm/src/lib.rs) for the interface.
-
-```
-cargo build --release --target wasm32-unknown-unknown --manifest-path wasm/Cargo.toml
-```
-
-## Releasing
-
-Bump the version in `Cargo.toml`, then push a matching tag:
-
-```
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-[`release.yml`](.github/workflows/release.yml) builds a binary for each platform and attaches it to a GitHub release, named like `gh-codeowners-darwin-arm64`, which is how `gh extension install` finds it.
-
-## Testing
-
-`cargo test` checks the matcher against every file ownership recorded from GitHub in [`tests/github.txt`](tests/github.txt).
-
-[codeowners-comparison](https://github.com/chdsbd/codeowners-comparison) runs other CODEOWNERS libraries on the same cases.
+See [`SPECIFICATION.md`](SPECIFICATION.md) for matching behavior.
