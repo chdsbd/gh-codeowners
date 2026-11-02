@@ -62,8 +62,10 @@ pub fn repo_root_for_codeowners(codeowners: &Path) -> PathBuf {
 pub const MAX_CODEOWNERS_BYTES: u64 = 3 * 1024 * 1024;
 
 // An owner GitHub accepts: @user, @org/team, or an email address with a dot
-// in its domain. GitHub skips lines with any other owner, but not lines with
-// users or teams that don't exist, which only can't be assigned.
+// in its domain. Otherwise GitHub ignores the line.
+//
+// A line whose user or team doesn't exist still applies, though GitHub can't
+// request a review from that owner. So matching files have no owner.
 static OWNER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
         r"^(?:@[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})$",
