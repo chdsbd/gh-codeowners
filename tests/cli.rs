@@ -1,6 +1,8 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use insta::assert_snapshot;
+
 struct Repo(PathBuf);
 
 impl Drop for Repo {
@@ -59,24 +61,17 @@ fn run(repo: &Repo, args: &[&str]) -> (i32, String, String) {
 
 #[test]
 fn prints_a_count_for_each_rule() {
-    assert_eq!(
-        run(&repo("text"), &["list"]),
-        (
-            0,
-            [
-                ".github/CODEOWNERS: 4 rules, 5 files, 0 files with no owner, 2 rules owning no files",
-                "",
-                "line  files  pattern",
-                "   1      4  *",
-                "   2      0  /docs/     every matching file is owned by a later rule",
-                "   3      1  *.md",
-                "   4      0  /missing/  no files match",
-                "",
-            ]
-            .join("\n"),
-            String::new()
-        )
-    );
+    let (status, stdout, stderr) = run(&repo("text"), &["list"]);
+    assert_eq!((status, stderr.as_str()), (0, ""));
+    assert_snapshot!(stdout, @r"
+    .github/CODEOWNERS: 4 rules, 5 files, 0 files with no owner, 2 rules owning no files
+
+    line  files  pattern
+       1      4  *
+       2      0  /docs/     every matching file is owned by a later rule
+       3      1  *.md
+       4      0  /missing/  no files match
+    ");
 }
 
 #[test]
@@ -106,30 +101,28 @@ fn a_closed_stdout_is_not_an_error() {
 fn json_unused_lists_only_rules_that_own_nothing() {
     let (status, stdout, _) = run(&repo("json"), &["list", "--json", "--unused"]);
     assert_eq!(status, 0);
-    assert_eq!(
-        stdout,
-        r#"[
-  {
-    "line": 2,
-    "pattern": "/docs/",
-    "owners": [
-      "@acme/docs"
-    ],
-    "files": 0,
-    "status": "overridden"
-  },
-  {
-    "line": 4,
-    "pattern": "/missing/",
-    "owners": [
-      "@acme/nobody"
-    ],
-    "files": 0,
-    "status": "unmatched"
-  }
-]
-"#
-    );
+    assert_snapshot!(stdout, @r#"
+    [
+      {
+        "line": 2,
+        "pattern": "/docs/",
+        "owners": [
+          "@acme/docs"
+        ],
+        "files": 0,
+        "status": "overridden"
+      },
+      {
+        "line": 4,
+        "pattern": "/missing/",
+        "owners": [
+          "@acme/nobody"
+        ],
+        "files": 0,
+        "status": "unmatched"
+      }
+    ]
+    "#);
 }
 
 #[test]
@@ -215,17 +208,12 @@ fn owner_of_prints_the_rule_that_owns_each_file() {
         ],
     );
     assert_eq!(status, 0);
-    assert_eq!(
-        stdout,
-        [
-            "docs/guide.md: @acme/writers, from .github/CODEOWNERS:3 *.md",
-            "src/main.ts: @acme/platform, from .github/CODEOWNERS:1 *",
-            "notes.md: @acme/writers, from .github/CODEOWNERS:3 *.md",
-            "docs/new: @acme/docs, from .github/CODEOWNERS:2 /docs/",
-            "",
-        ]
-        .join("\n")
-    );
+    assert_snapshot!(stdout, @r"
+    docs/guide.md: @acme/writers, from .github/CODEOWNERS:3 *.md
+    src/main.ts: @acme/platform, from .github/CODEOWNERS:1 *
+    notes.md: @acme/writers, from .github/CODEOWNERS:3 *.md
+    docs/new: @acme/docs, from .github/CODEOWNERS:2 /docs/
+    ");
 }
 
 #[test]
@@ -244,26 +232,24 @@ fn owner_of_json_has_null_for_files_no_rule_matches() {
         "/docs/ @acme/docs\n",
     );
     assert_eq!(status, 0);
-    assert_eq!(
-        stdout,
-        r#"[
-  {
-    "path": "docs/a.md",
-    "line": 1,
-    "pattern": "/docs/",
-    "owners": [
-      "@acme/docs"
+    assert_snapshot!(stdout, @r#"
+    [
+      {
+        "path": "docs/a.md",
+        "line": 1,
+        "pattern": "/docs/",
+        "owners": [
+          "@acme/docs"
+        ]
+      },
+      {
+        "path": "src/main.ts",
+        "line": null,
+        "pattern": null,
+        "owners": []
+      }
     ]
-  },
-  {
-    "path": "src/main.ts",
-    "line": null,
-    "pattern": null,
-    "owners": []
-  }
-]
-"#
-    );
+    "#);
 }
 
 #[test]
@@ -275,15 +261,10 @@ fn errors_lists_problems_github_would_have() {
         "*.js @acme/js\n[x] @acme/x\n!foo @acme/foo\n",
     );
     assert_eq!(status, 1);
-    assert_eq!(
-        stdout,
-        [
-            "<stdin>:2: error: `[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\\`, like `\\[x\\]`",
-            "<stdin>:3: warning: `!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories",
-            "",
-        ]
-        .join("\n")
-    );
+    assert_snapshot!(stdout, @r"
+    <stdin>:2: error: `[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\`, like `\[x\]`
+    <stdin>:3: warning: `!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories
+    ");
     let (status, stdout, _) = run(&repo, &["check"]);
     assert_eq!(
         (status, stdout.as_str()),
@@ -300,21 +281,16 @@ fn counting_lists_problems_after_the_counts() {
         "* @acme/all\n[x] @acme/x\n*.md not-an-owner\n",
     );
     assert_eq!(status, 0);
-    assert_eq!(
-        stdout,
-        [
-            "<stdin>: 2 rules, 5 files, 0 files with no owner, 1 rule owning no files",
-            "",
-            "line  files  pattern",
-            "   1      5  *",
-            "   2      0  [x]      no files match",
-            "",
-            "<stdin>:2: error: `[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\\`, like `\\[x\\]`",
-            "<stdin>:3: error: `not-an-owner` isn't a valid owner - owners must be @user, @org/team or an email address",
-            "",
-        ]
-        .join("\n")
-    );
+    assert_snapshot!(stdout, @r"
+    <stdin>: 2 rules, 5 files, 0 files with no owner, 1 rule owning no files
+
+    line  files  pattern
+       1      5  *
+       2      0  [x]      no files match
+
+    <stdin>:2: error: `[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\`, like `\[x\]`
+    <stdin>:3: error: `not-an-owner` isn't a valid owner - owners must be @user, @org/team or an email address
+    ");
 }
 
 #[test]
@@ -324,35 +300,26 @@ fn check_json_lists_problems() {
         &["check", "--codeowners", "-", "--json"],
         "[x] @acme/x\n",
     );
-    assert_eq!(
-        (status, stdout.as_str()),
-        (
-            1,
-            r#"[
-  {
-    "line": 1,
-    "severity": "error",
-    "message": "`[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\\`, like `\\[x\\]`"
-  }
-]
-"#
-        )
-    );
+    assert_eq!(status, 1);
+    assert_snapshot!(stdout, @r#"
+    [
+      {
+        "line": 1,
+        "severity": "error",
+        "message": "`[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\\`, like `\\[x\\]`"
+      }
+    ]
+    "#);
 }
 
 #[test]
 fn check_unused_reports_rules_that_own_no_files() {
     let (status, stdout, _) = run(&repo("check-unused"), &["check", "--unused"]);
     assert_eq!(status, 1);
-    assert_eq!(
-        stdout,
-        [
-            ".github/CODEOWNERS:2: error: `/docs/` owns no files - every matching file is owned by a later rule",
-            ".github/CODEOWNERS:4: error: `/missing/` owns no files - no files match",
-            "",
-        ]
-        .join("\n")
-    );
+    assert_snapshot!(stdout, @r"
+    .github/CODEOWNERS:2: error: `/docs/` owns no files - every matching file is owned by a later rule
+    .github/CODEOWNERS:4: error: `/missing/` owns no files - no files match
+    ");
 }
 
 #[test]
@@ -428,16 +395,11 @@ fn works_from_a_subdirectory() {
     // Relative paths are relative to the current directory.
     let (status, stdout, _) = run_in(&docs, &["view", "guide.md", "../src/main.ts", "./new/file"]);
     assert_eq!(status, 0);
-    assert_eq!(
-        stdout,
-        [
-            "docs/guide.md: @acme/writers, from .github/CODEOWNERS:3 *.md",
-            "src/main.ts: @acme/platform, from .github/CODEOWNERS:1 *",
-            "docs/new/file: @acme/docs, from .github/CODEOWNERS:2 /docs/",
-            "",
-        ]
-        .join("\n")
-    );
+    assert_snapshot!(stdout, @r"
+    docs/guide.md: @acme/writers, from .github/CODEOWNERS:3 *.md
+    src/main.ts: @acme/platform, from .github/CODEOWNERS:1 *
+    docs/new/file: @acme/docs, from .github/CODEOWNERS:2 /docs/
+    ");
     assert_eq!(
         run_in(&docs, &["check"]).1,
         ".github/CODEOWNERS: no problems\n"
@@ -451,15 +413,10 @@ fn owner_of_treats_directories_as_directories() {
     // docs.
     let (status, stdout, _) = run(&repo, &["view", "docs", "src/docs"]);
     assert_eq!(status, 0);
-    assert_eq!(
-        stdout,
-        [
-            "docs/: @acme/docs, from .github/CODEOWNERS:2 /docs/",
-            "src/docs: @acme/platform, from .github/CODEOWNERS:1 *",
-            "",
-        ]
-        .join("\n")
-    );
+    assert_snapshot!(stdout, @r"
+    docs/: @acme/docs, from .github/CODEOWNERS:2 /docs/
+    src/docs: @acme/platform, from .github/CODEOWNERS:1 *
+    ");
 }
 
 #[test]
