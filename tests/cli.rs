@@ -332,7 +332,7 @@ fn check_json_lists_problems() {
   {
     "line": 1,
     "severity": "error",
-    "message": "both `[` and `]` must be escaped with a `\\`"
+    "message": "`[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\\`, like `\\[x\\]`"
   }
 ]
 "#
