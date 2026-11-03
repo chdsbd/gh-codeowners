@@ -278,7 +278,7 @@ fn errors_lists_problems_github_would_have() {
     assert_eq!(
         stdout,
         [
-            "<stdin>:2: error: both `[` and `]` must be escaped with a `\\`",
+            "<stdin>:2: error: `[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\\`, like `\\[x\\]`",
             "<stdin>:3: warning: `!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories",
             "",
         ]
@@ -309,7 +309,7 @@ fn counting_lists_problems_after_the_counts() {
             "   1      5  *",
             "   2      0  [x]      no files match",
             "",
-            "<stdin>:2: error: both `[` and `]` must be escaped with a `\\`",
+            "<stdin>:2: error: `[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\\`, like `\\[x\\]`",
             "<stdin>:3: error: `not-an-owner` isn't a valid owner - owners must be @user, @org/team or an email address",
             "",
         ]

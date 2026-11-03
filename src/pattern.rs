@@ -31,11 +31,11 @@ pub struct Problem {
     pub invalid: bool,
     /// Whether the pattern matches nothing on GitHub.
     pub matches_nothing: bool,
-    pub message: &'static str,
+    pub message: String,
 }
 
 impl Problem {
-    fn invalid(message: &'static str) -> Problem {
+    fn invalid(message: String) -> Problem {
         Problem {
             invalid: true,
             matches_nothing: true,
@@ -43,11 +43,11 @@ impl Problem {
         }
     }
 
-    fn matches_nothing(message: &'static str) -> Problem {
+    fn matches_nothing(message: &str) -> Problem {
         Problem {
             invalid: false,
             matches_nothing: true,
-            message,
+            message: message.to_string(),
         }
     }
 }
@@ -71,15 +71,15 @@ pub fn problem(pattern: &str) -> Option<Problem> {
         ));
     }
     if pattern.starts_with("\\[") && !pattern.contains('/') {
-        return Some(Problem::matches_nothing(
-            "GitHub matches nothing for a pattern starting with `\\[` and without a slash - did you mean to start it with `**/`?",
-        ));
+        return Some(Problem::matches_nothing(&format!(
+            "GitHub matches nothing for a pattern starting with `\\[` and without a slash - did you mean `**/{pattern}`?"
+        )));
     }
     if name.is_some() {
         return Some(Problem {
             invalid: false,
             matches_nothing: false,
-            message: "`!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories",
+            message: "`!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories".to_string(),
         });
     }
     None
@@ -95,24 +95,60 @@ pub fn can_match(pattern: &str) -> bool {
 
 /// Why GitHub rejects `pattern`, if it does: `[` and `]` must be escaped,
 /// `\` can only escape a space, tab, `#`, `[`, `]` or `\`, and there can't be
-/// more than two `*`s in a row.
-fn invalid_reason(pattern: &str) -> Option<&'static str> {
+/// more than two `*`s in a row. Where the fix is clear, the message suggests
+/// the fixed pattern, like GitHub does for `*`s.
+fn invalid_reason(pattern: &str) -> Option<String> {
     let mut stars = 0;
     let mut chars = pattern.chars();
     while let Some(c) = chars.next() {
         stars = if c == '*' { stars + 1 } else { 0 };
-        match c {
+        let reason = match c {
             '\\' if !matches!(chars.next(), Some(' ' | '\t' | '#' | '[' | ']' | '\\')) => {
-                return Some(
-                    "all `\\` characters must be escaped with another `\\` unless escaping: tab, space, #, [, ]",
-                );
+                "all `\\` characters must be escaped with another `\\` unless escaping: tab, space, #, [, ]".to_string()
             }
-            '[' | ']' => return Some("both `[` and `]` must be escaped with a `\\`"),
-            _ if stars > 2 => return Some("did you mean `**` instead?"),
-            _ => {}
-        }
+            '[' | ']' => format!(
+                "both `[` and `]` must be escaped with a `\\`, like `{}`",
+                escape_brackets(pattern)
+            ),
+            _ if stars > 2 => format!("did you mean `{}` instead?", collapse_stars(pattern)),
+            _ => continue,
+        };
+        return Some(format!("`{pattern}` isn't a valid pattern - {reason}"));
     }
     None
+}
+
+/// `pattern` with each unescaped `[` and `]` escaped.
+fn escape_brackets(pattern: &str) -> String {
+    let mut out = String::new();
+    let mut chars = pattern.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '\\' => {
+                out.push(c);
+                out.extend(chars.next());
+            }
+            '[' | ']' => {
+                out.push('\\');
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
+}
+
+/// `pattern` with each run of more than two `*`s cut to `**`.
+fn collapse_stars(pattern: &str) -> String {
+    let mut out = String::new();
+    let mut stars = 0;
+    for c in pattern.chars() {
+        stars = if c == '*' { stars + 1 } else { 0 };
+        if stars <= 2 {
+            out.push(c);
+        }
+    }
+    out
 }
 
 /// Whether there are as many `\[`s as `\]`s, in any order. GitHub matches
@@ -511,6 +547,23 @@ mod tests {
         ] {
             assert_eq!(compile(pattern).is_some(), valid, "{pattern}");
         }
+    }
+
+    #[test]
+    fn suggests_fixes_for_invalid_patterns() {
+        let message = |pattern| problem(pattern).unwrap().message;
+        assert_eq!(
+            message("/tmp/***"),
+            "`/tmp/***` isn't a valid pattern - did you mean `/tmp/**` instead?"
+        );
+        assert_eq!(
+            message("a/****/b"),
+            "`a/****/b` isn't a valid pattern - did you mean `a/**/b` instead?"
+        );
+        assert_eq!(
+            message("/app/[id]/\\[x\\]"),
+            "`/app/[id]/\\[x\\]` isn't a valid pattern - both `[` and `]` must be escaped with a `\\`, like `/app/\\[id\\]/\\[x\\]`"
+        );
     }
 
     #[test]

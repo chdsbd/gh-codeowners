@@ -56,7 +56,7 @@ src/components/button.tsx: @acme/design, from .github/CODEOWNERS:6 /src/componen
 ```bash
 gh codeowners check
 
-.github/CODEOWNERS:7: error: both `[` and `]` must be escaped with a `\`
+.github/CODEOWNERS:7: error: `/app/[id]/` isn't a valid pattern - both `[` and `]` must be escaped with a `\`, like `/app/\[id\]/`
 .github/CODEOWNERS:9: warning: `!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories
 ```
 
