@@ -157,7 +157,7 @@ pub fn find_problems(text: &str) -> Vec<LineProblem> {
             problems.push(LineProblem {
                 lineno: Some(lineno),
                 error: problem.invalid,
-                message: problem.message.to_string(),
+                message: problem.message,
             });
         }
         for owner in owners.iter().filter(|owner| !OWNER.is_match(owner)) {
