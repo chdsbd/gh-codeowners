@@ -8762,3 +8762,306 @@ a..b/c | 0
 Docs/A.MD | 0
 e/f | 0
 d/e | 0
+
+> a\ @o
+a\ | 0
+x/a\ | 0
+a | 0
+ab | 0
+a\b/c | 0
+b\ | 0
+a\\ | 0
+a @o | 1
+
+> /a\ @o
+a\ | 0
+x/a\ | 0
+a | 0
+ab | 0
+a\b/c | 0
+b\ | 0
+a\\ | 0
+a @o | 1
+
+> **/a\ @o
+a\ | 0
+x/a\ | 0
+a | 0
+ab | 0
+a\b/c | 0
+b\ | 0
+a\\ | 0
+a @o | 1
+
+> *\ @o
+a\ | 0
+x/a\ | 0
+a | 0
+ab | 0
+a\b/c | 0
+b\ | 0
+a\\ | 0
+a @o | 1
+
+> a\\ @o
+a\ | 1
+x/a\ | 1
+a | 0
+ab | 0
+a\b/c | 0
+b\ | 0
+a\\ | 0
+a @o | 0
+
+> x/a\ @o
+a\ | 0
+x/a\ | 0
+a | 0
+ab | 0
+a\b/c | 0
+b\ | 0
+a\\ | 0
+a @o | 0
+
+> a\/ @o
+! 1 Invalid pattern
+a\ | 0
+x/a\ | 0
+a | 0
+ab | 0
+a\b/c | 0
+b\ | 0
+a\\ | 0
+a @o | 0
+
+> * @o
+> a\ @p
+a\ | 1
+x/a\ | 1
+a | 1
+ab | 1
+a\b/c | 1
+b\ | 1
+a\\ | 1
+a @o | 1
+
+> a\
+a\ | 0
+x/a\ | 0
+a | 1
+ab | 0
+a\b/c | 0
+b\ | 0
+a\\ | 0
+a @o | 0
+
+> x/a\
+a\ | 0
+x/a\ | 1
+a | 0
+ab | 0
+a\b/c | 0
+b\ | 0
+a\\ | 0
+a @o | 0
+
+> *\
+a\ | 1
+x/a\ | 1
+a | 1
+ab | 1
+a\b/c | 1
+b\ | 1
+a\\ | 1
+a @o | 1
+
+> a\\
+a\ | 1
+x/a\ | 1
+a | 0
+ab | 0
+a\b/c | 0
+b\ | 0
+a\\ | 0
+a @o | 0
+
+> * @o
+> a\
+a\ | 1
+x/a\ | 1
+a | 2
+ab | 1
+a\b/c | 1
+b\ | 1
+a\\ | 1
+a @o | 1
+
+> a\
+a | 1
+a\ | 0
+ab | 0
+ab\ | 0
+x/a | 1
+x/a\ | 0
+y/a | 1
+y/a\ | 0
+x/ab | 0
+z/x/a | 1
+z/x/a\ | 0
+
+> /a\
+a | 1
+a\ | 1
+ab | 0
+ab\ | 0
+x/a | 0
+x/a\ | 0
+y/a | 0
+y/a\ | 0
+x/ab | 0
+z/x/a | 0
+z/x/a\ | 0
+
+> **/a\
+a | 1
+a\ | 1
+ab | 0
+ab\ | 0
+x/a | 1
+x/a\ | 1
+y/a | 1
+y/a\ | 1
+x/ab | 0
+z/x/a | 1
+z/x/a\ | 1
+
+> x/a\
+a | 0
+a\ | 0
+ab | 0
+ab\ | 0
+x/a | 1
+x/a\ | 1
+y/a | 0
+y/a\ | 0
+x/ab | 0
+z/x/a | 0
+z/x/a\ | 0
+
+> /x/a\
+a | 0
+a\ | 0
+ab | 0
+ab\ | 0
+x/a | 1
+x/a\ | 1
+y/a | 0
+y/a\ | 0
+x/ab | 0
+z/x/a | 0
+z/x/a\ | 0
+
+> x/*\
+a | 0
+a\ | 0
+ab | 0
+ab\ | 0
+x/a | 1
+x/a\ | 1
+y/a | 0
+y/a\ | 0
+x/ab | 1
+z/x/a | 0
+z/x/a\ | 0
+
+> a*\
+a | 1
+a\ | 1
+ab | 1
+ab\ | 1
+x/a | 1
+x/a\ | 1
+y/a | 1
+y/a\ | 1
+x/ab | 1
+z/x/a | 1
+z/x/a\ | 1
+
+> */a\
+a | 0
+a\ | 0
+ab | 0
+ab\ | 0
+x/a | 1
+x/a\ | 1
+y/a | 1
+y/a\ | 1
+x/ab | 0
+z/x/a | 0
+z/x/a\ | 0
+
+> ?\
+a | 1
+a\ | 0
+ab | 0
+ab\ | 0
+x/a | 1
+x/a\ | 1
+y/a | 1
+y/a\ | 1
+x/ab | 1
+z/x/a | 1
+z/x/a\ | 1
+
+> a?\
+a | 0
+a\ | 1
+ab | 1
+ab\ | 0
+x/a | 0
+x/a\ | 1
+y/a | 0
+y/a\ | 1
+x/ab | 1
+z/x/a | 0
+z/x/a\ | 1
+
+> x/\
+a | 0
+a\ | 0
+ab | 0
+ab\ | 0
+x/a | 0
+x/a\ | 0
+y/a | 0
+y/a\ | 0
+x/ab | 0
+z/x/a | 0
+z/x/a\ | 0
+
+> a\\\
+a | 0
+a\ | 1
+ab | 0
+ab\ | 0
+x/a | 0
+x/a\ | 1
+y/a | 0
+y/a\ | 1
+x/ab | 0
+z/x/a | 0
+z/x/a\ | 1
+
+> a @o\
+! 1 Invalid owner
+a | 0
+a\ | 0
+ab | 0
+ab\ | 0
+x/a | 0
+x/a\ | 0
+y/a | 0
+y/a\ | 0
+x/ab | 0
+z/x/a | 0
+z/x/a\ | 0
