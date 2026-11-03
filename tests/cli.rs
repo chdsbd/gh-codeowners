@@ -104,46 +104,31 @@ fn a_closed_stdout_is_not_an_error() {
 
 #[test]
 fn json_unused_lists_only_rules_that_own_nothing() {
-    let (status, stdout, _) = run(
-        &repo("json"),
-        &["list", "--json", "line,pattern,files,status", "--unused"],
-    );
+    let (status, stdout, _) = run(&repo("json"), &["list", "--json", "--unused"]);
     assert_eq!(status, 0);
-    // Like gh, fields come out in alphabetical order.
     assert_eq!(
         stdout,
         r#"[
   {
-    "files": 0,
     "line": 2,
     "pattern": "/docs/",
+    "owners": [
+      "@acme/docs"
+    ],
+    "files": 0,
     "status": "overridden"
   },
   {
-    "files": 0,
     "line": 4,
     "pattern": "/missing/",
+    "owners": [
+      "@acme/nobody"
+    ],
+    "files": 0,
     "status": "unmatched"
   }
 ]
 "#
-    );
-}
-
-#[test]
-fn json_without_fields_lists_them() {
-    let repo = repo("json-fields");
-    let (status, stdout, stderr) = run(&repo, &["list", "--json"]);
-    assert_eq!((status, stdout.as_str()), (2, ""));
-    assert_eq!(
-        stderr,
-        "Specify one or more comma-separated fields for `--json`:\n  files\n  line\n  owners\n  pattern\n  status\n"
-    );
-    let (status, _, stderr) = run(&repo, &["view", "a", "--json", "files"]);
-    assert_eq!(status, 2);
-    assert!(
-        stderr.starts_with("Unknown JSON field: \"files\"\n"),
-        "{stderr}"
     );
 }
 
@@ -253,7 +238,6 @@ fn owner_of_json_has_null_for_files_no_rule_matches() {
             "--codeowners",
             "-",
             "--json",
-            "path,line,pattern,owners",
             "docs/a.md",
             "src/main.ts",
         ],
@@ -264,18 +248,18 @@ fn owner_of_json_has_null_for_files_no_rule_matches() {
         stdout,
         r#"[
   {
+    "path": "docs/a.md",
     "line": 1,
+    "pattern": "/docs/",
     "owners": [
       "@acme/docs"
-    ],
-    "path": "docs/a.md",
-    "pattern": "/docs/"
+    ]
   },
   {
-    "line": null,
-    "owners": [],
     "path": "src/main.ts",
-    "pattern": null
+    "line": null,
+    "pattern": null,
+    "owners": []
   }
 ]
 "#
@@ -337,14 +321,21 @@ fn counting_lists_problems_after_the_counts() {
 fn check_json_lists_problems() {
     let (status, stdout, _) = run_with_stdin(
         &repo("check-json"),
-        &["check", "--codeowners", "-", "--json", "line,severity"],
+        &["check", "--codeowners", "-", "--json"],
         "[x] @acme/x\n",
     );
     assert_eq!(
         (status, stdout.as_str()),
         (
             1,
-            "[\n  {\n    \"line\": 1,\n    \"severity\": \"error\"\n  }\n]\n"
+            r#"[
+  {
+    "line": 1,
+    "severity": "error",
+    "message": "both `[` and `]` must be escaped with a `\\`"
+  }
+]
+"#
         )
     );
 }

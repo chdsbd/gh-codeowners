@@ -39,8 +39,7 @@ gh codeowners <command> [flags]
                        GitHub would use)
   --root <dir>         Repository root (default: the git repository
                        containing the current directory)
-  --json <fields>      Output JSON with the specified fields, like gh. Without
-                       fields, lists the ones the command has.
+  --json               Output JSON
 ```
 
 ### Find a file's owner
