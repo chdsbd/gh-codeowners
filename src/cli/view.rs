@@ -28,8 +28,6 @@ pub(crate) fn run(loaded: &Loaded, args: &Args, json: bool) -> Result<ExitCode, 
     Ok(ExitCode::SUCCESS)
 }
 
-/// `path` relative to `root`, with `/` separators. Relative paths are
-/// relative to the current directory.
 fn repo_path(root: &Path, path: &str) -> Result<String, String> {
     let given = normalize(&absolute(Path::new(path)));
     let relative = match given.strip_prefix(normalize(&absolute(root))) {
@@ -51,8 +49,6 @@ fn repo_path(root: &Path, path: &str) -> Result<String, String> {
     Ok(relative)
 }
 
-/// `path` without `.` and `..` components, without looking at the file
-/// system.
 fn normalize(path: &Path) -> PathBuf {
     let mut normal = PathBuf::new();
     for component in path.components() {
@@ -67,7 +63,6 @@ fn normalize(path: &Path) -> PathBuf {
     normal
 }
 
-/// `path` with symlinks resolved, even if the file doesn't exist yet.
 fn real_path(path: &Path) -> Option<PathBuf> {
     std::fs::canonicalize(path)
         .ok()

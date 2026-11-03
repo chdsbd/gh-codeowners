@@ -6,11 +6,15 @@ A CLI for [GitHub CODEOWNERS](https://docs.github.com/en/repositories/managing-y
 - Count the files owned by a rule.
 - Find errors in your CODEOWNERS file.
 
+## TODOs
+
+- [ ] `--online` flag for querying GitHub api to validate teams have write access to repository.
+
 ## Install
 
 As a [GitHub CLI](https://cli.github.com) extension (recommended):
 
-```bash
+```
 gh extension install chdsbd/gh-codeowners
 
 gh codeowners list
@@ -21,7 +25,7 @@ gh codeowners check
 
 Or with Cargo, which installs the `gh-codeowners` command:
 
-```bash
+```
 cargo install --git https://github.com/chdsbd/gh-codeowners
 ```
 
@@ -44,7 +48,7 @@ gh codeowners <command> [flags]
 
 ### Find a file's owner
 
-```bash
+```
 gh codeowners view app.ts components/button.tsx
 
 src/app.ts: @acme/web, from .github/CODEOWNERS:5 /src/
@@ -53,7 +57,7 @@ src/components/button.tsx: @acme/design, from .github/CODEOWNERS:6 /src/componen
 
 ### Check CODEOWNERS for errors
 
-```bash
+```
 gh codeowners check
 
 .github/CODEOWNERS:7: error: `/app/[id]/` isn't a valid pattern - both `[` and `]` must be escaped with a `\`, like `/app/\[id\]/`
@@ -62,7 +66,7 @@ gh codeowners check
 
 ### Fail CI on errors or dead rules
 
-```bash
+```
 gh codeowners check --unused
 ```
 

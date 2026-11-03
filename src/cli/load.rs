@@ -90,8 +90,6 @@ fn repo_display(root: &Path, path: &Path) -> String {
     }
 }
 
-/// A warning that GitHub ignores another CODEOWNERS file's rules, about
-/// `subject`, the file GitHub uses.
 pub(crate) fn ignored_warning(loaded: &Loaded, subject: &str) -> Option<String> {
     let ignored = loaded.ignored.as_ref()?;
     let ignored = repo_display(&loaded.root, ignored);

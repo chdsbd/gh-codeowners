@@ -1,35 +1,17 @@
-//! Turns a CODEOWNERS pattern into a regex, the way GitHub matches them:
-//! gitignore rules, except that paths are case-sensitive, there are no
-//! character classes, and `!` doesn't negate. Unlike gitignore, a pattern
-//! ending in `/*` doesn't match nested files, and one ending in `/**/` isn't
-//! limited to directories.
-//! Where GitHub's behavior differs from its docs, this follows what GitHub
-//! does, as checked against a test repository.
-
 use std::sync::OnceLock;
 
-/// For a `!` pattern without a slash, the rest of the pattern. GitHub
-/// doesn't negate these, but matches file names like the rest would, and
-/// not directories. With a slash, `!` is an ordinary character.
 fn negated_name(pattern: &str) -> Option<&str> {
     pattern.strip_prefix('!').filter(|rest| !rest.contains('/'))
 }
 
-/// Whether a pattern only matches directories: it ends in `/`, but not
-/// `/**/`, which GitHub matches like `/**`.
 pub fn is_dir_only(pattern: &str) -> bool {
     let trimmed = pattern.trim_end_matches('/');
     pattern.ends_with('/') && trimmed != "**" && !trimmed.ends_with("/**")
 }
 
-/// Something wrong with a pattern.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Problem {
-    /// Whether GitHub rejects the pattern, which its CODEOWNERS errors API
-    /// reports. Otherwise GitHub accepts it, but it likely doesn't do what
-    /// it looks like it does.
     pub invalid: bool,
-    /// Whether the pattern matches nothing on GitHub.
     pub matches_nothing: bool,
     pub message: String,
 }
@@ -52,8 +34,6 @@ impl Problem {
     }
 }
 
-/// What's wrong with `pattern`, if anything. The messages for invalid
-/// patterns follow GitHub's.
 pub fn problem(pattern: &str) -> Option<Problem> {
     if let Some(message) = invalid_reason(pattern) {
         return Some(Problem::invalid(message));
@@ -97,18 +77,11 @@ pub fn problem(pattern: &str) -> Option<Problem> {
     None
 }
 
-/// Whether `pattern` can match a path. Blank lines, comments and patterns
-/// GitHub rejects as invalid can't, nor can a few that GitHub accepts but
-/// never matches.
 pub fn can_match(pattern: &str) -> bool {
     !(pattern.trim().is_empty() || pattern.starts_with('#'))
         && problem(pattern).is_none_or(|p| !p.matches_nothing)
 }
 
-/// Why GitHub rejects `pattern`, if it does: `[` and `]` must be escaped,
-/// `\` can only escape a space, tab, `#`, `[`, `]` or `\`, and there can't be
-/// more than two `*`s in a row. Where the fix is clear, the message suggests
-/// the fixed pattern, like GitHub does for `*`s.
 fn invalid_reason(pattern: &str) -> Option<String> {
     let mut stars = 0;
     let mut chars = pattern.chars();
@@ -181,8 +154,6 @@ fn brackets_pair_up(pattern: &str) -> bool {
     balance == 0
 }
 
-/// Whether `pattern` is relative to the root: it has a leading or middle
-/// slash. Otherwise it matches at any depth.
 fn is_anchored(pattern: &str) -> bool {
     pattern.strip_suffix('/').unwrap_or(pattern).contains('/')
 }

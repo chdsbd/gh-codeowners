@@ -29,20 +29,18 @@ struct Cli {
 enum Command {
     /// Check CODEOWNERS for lines GitHub rejects
     ///
-    /// Also warns about lines that likely don't do what they look like. Exits
-    /// with 1 if CODEOWNERS has errors, and 2 if the command fails.
+    /// Warns about lines that are misleading. Exits with 1 if CODEOWNERS has errors,
+    /// and 2 if the command fails.
     Check(check::Args),
-    /// List each rule with how many files it owns
+    /// List each rule and how many files it owns
     ///
-    /// A file counts towards the last rule that matches it, like on GitHub, so
-    /// a rule can match files and still own none of them. Files are the ones in
-    /// git's index. Any problems `check` reports follow the counts.
+    /// File are counted from git's index.
+    /// Problems are reported after the counts.
     List(list::Args),
     /// Show the rule that owns each path
     ///
-    /// Like GitHub shows when you hover over a file's code owners icon. Paths
-    /// needn't be tracked, and relative paths are relative to the current
-    /// directory.
+    /// Output matches GitHub's code owners icon tooltip.
+    /// Paths don't need to be tracked by git.
     View(view::Args),
 }
 
