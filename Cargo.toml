@@ -13,6 +13,7 @@ exclude = [".github", "wasm"]
 
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
+comfy-table = { version = "8.0.1", default-features = false }
 memchr = "2.8.3"
 memmap2 = "0.9.12"
 regex = "1.13.1"

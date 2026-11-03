@@ -40,7 +40,11 @@ pub fn problem(pattern: &str) -> Option<Problem> {
     }
     let name = negated_name(pattern);
     let pattern = name.unwrap_or(pattern);
-    if pattern.trim_matches('/').is_empty() {
+    if strip_trailing_escape(pattern)
+        .unwrap_or(pattern)
+        .trim_matches('/')
+        .is_empty()
+    {
         return Some(Problem::matches_nothing(
             "the pattern will never match any files - did you mean `*` instead?",
         ));
@@ -48,6 +52,14 @@ pub fn problem(pattern: &str) -> Option<Problem> {
     if !brackets_pair_up(pattern) {
         return Some(Problem::matches_nothing(
             "GitHub matches nothing when a pattern has a different number of `\\[`s and `\\]`s",
+        ));
+    }
+    if pattern
+        .split('/')
+        .any(|segment| segment == "." || segment == "..")
+    {
+        return Some(Problem::matches_nothing(
+            "paths in git never have `.` or `..` segments, so GitHub matches nothing",
         ));
     }
     if pattern.starts_with("\\[") && !pattern.contains('/') {
@@ -76,7 +88,8 @@ fn invalid_reason(pattern: &str) -> Option<String> {
     while let Some(c) = chars.next() {
         stars = if c == '*' { stars + 1 } else { 0 };
         let reason = match c {
-            '\\' if !matches!(chars.next(), Some(' ' | '\t' | '#' | '[' | ']' | '\\')) => {
+            // GitHub allows a trailing `\`, which escapes nothing.
+            '\\' if !matches!(chars.next(), None | Some(' ' | '\t' | '#' | '[' | ']' | '\\')) => {
                 "all `\\` characters must be escaped with another `\\` unless escaping: tab, space, #, [, ]".to_string()
             }
             '[' | ']' => format!(
@@ -193,14 +206,40 @@ pub fn regex_source(pattern: &str) -> Option<String> {
         Some(rest) => (rest, true),
         None => (pattern, false),
     };
+    let Some(rest) = strip_trailing_escape(pattern) else {
+        return Some(format!("(?s-u){}", escaped_regex(pattern, files_only)));
+    };
+    // A trailing `\` escapes nothing, so GitHub drops it. With a slash, the
+    // pattern also matches it as a literal `\`.
+    let mut sources = Vec::new();
+    if !rest.ends_with('/') {
+        sources.push(escaped_regex(rest, files_only));
+    }
+    if is_anchored(pattern) {
+        sources.push(escaped_regex(&format!("{rest}\\\\"), files_only));
+    }
+    if sources.is_empty() {
+        return None;
+    }
+    Some(format!("(?s-u)(?:{})", sources.join(")|(?:")))
+}
+
+/// `pattern` without a trailing `\` that escapes nothing, if it has one.
+fn strip_trailing_escape(pattern: &str) -> Option<&str> {
+    let rest = pattern.strip_suffix('\\')?;
+    let backslashes = rest.len() - rest.trim_end_matches('\\').len();
+    (backslashes % 2 == 0).then_some(rest)
+}
+
+fn escaped_regex(pattern: &str, files_only: bool) -> String {
     let unescaped = pattern_regex(pattern, files_only, false);
     // GitHub matches escaped brackets either way, but not a mix of the two.
-    Some(if pattern.contains("\\[") {
+    if pattern.contains("\\[") {
         let raw = pattern_regex(pattern, files_only, true);
-        format!("(?s-u)(?:{unescaped})|(?:{raw})")
+        format!("(?:{unescaped})|(?:{raw})")
     } else {
-        format!("(?s-u){unescaped}")
-    })
+        unescaped
+    }
 }
 
 /// With `files_only`, the regex doesn't match directories.
@@ -515,6 +554,9 @@ mod tests {
             ("a**b", true),
             ("**a", true),
             ("{a,b}", true),
+            ("a\\", true),
+            ("a\\\\\\", true),
+            ("x/\\", true),
         ] {
             assert_eq!(compile(pattern).is_some(), valid, "{pattern}");
         }
@@ -535,6 +577,24 @@ mod tests {
             message("/app/[id]/\\[x\\]"),
             "`/app/[id]/\\[x\\]` isn't a valid pattern - both `[` and `]` must be escaped with a `\\`, like `/app/\\[id\\]/\\[x\\]`"
         );
+    }
+
+    #[test]
+    fn matches_a_trailing_backslash_like_github() {
+        // From a test repository on GitHub.
+        for (pattern, path, expected) in [
+            ("a\\", "x/a", true),
+            ("a\\", "a\\", false),
+            ("a?\\", "a\\", true),
+            ("/a\\", "a", true),
+            ("/a\\", "a\\", true),
+            ("**/a\\", "x/a\\", true),
+            ("x/a\\", "x/a", true),
+            ("x/a\\", "x/a\\", true),
+            ("x/\\", "x/a", false),
+        ] {
+            assert_eq!(matches(pattern, path), expected, "{pattern} {path}");
+        }
     }
 
     #[test]
@@ -613,6 +673,15 @@ mod tests {
             "/a\\]b",
             "/x\\]\\[y\\]",
             "a\\[b\\]c\\]d",
+            ".",
+            "/.",
+            "..",
+            "./a",
+            "./docs/",
+            "../a",
+            "a/.",
+            "a/../docs",
+            "docs/./x/",
         ] {
             assert!(compile(pattern).is_none(), "{pattern}");
         }

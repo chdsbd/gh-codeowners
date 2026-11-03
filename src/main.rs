@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use comfy_table::presets::NOTHING;
+use comfy_table::{CellAlignment, Table};
 
 use gh_codeowners::codeowners::{
     CodeownersRule, LineProblem, MAX_CODEOWNERS_BYTES, find_codeowners, find_problems,
@@ -241,44 +243,28 @@ fn format_text(stats: &Stats, rules: &[&RuleStats]) -> String {
     if rules.is_empty() {
         return out;
     }
-    let line_width = rules
-        .iter()
-        .map(|r| (r.rule.lineno + 1).to_string().len())
-        .max()
-        .unwrap_or(0)
-        .max(4);
-    let files_width = rules
-        .iter()
-        .map(|r| r.files.to_string().len())
-        .max()
-        .unwrap_or(0)
-        .max(5);
-    let pattern_width = rules
-        .iter()
-        .map(|r| r.rule.pattern.chars().count())
-        .max()
-        .unwrap_or(0)
-        .max(7);
-    write!(
-        out,
-        "\n\n{:>line_width$}  {:>files_width$}  pattern",
-        "line", "files"
-    )
-    .unwrap();
+    let mut table = Table::new();
+    table
+        .load_style(NOTHING)
+        .set_header(["line", "files", "pattern", ""]);
     for r in rules {
-        write!(
-            out,
-            "\n{:>line_width$}  {:>files_width$}  ",
-            r.rule.lineno + 1,
-            r.files
-        )
-        .unwrap();
-        let note = r.status.note();
-        if note.is_empty() {
-            out.push_str(&r.rule.pattern);
-        } else {
-            write!(out, "{:<pattern_width$}  {note}", r.rule.pattern).unwrap();
+        table.add_row([
+            (r.rule.lineno + 1).to_string(),
+            r.files.to_string(),
+            r.rule.pattern.clone(),
+            r.status.note().to_string(),
+        ]);
+    }
+    for (i, column) in table.column_iter_mut().enumerate() {
+        // Two spaces between columns, and none before the first.
+        column.set_padding((0, if i < 3 { 2 } else { 0 }));
+        if i < 2 {
+            column.set_cell_alignment(CellAlignment::Right);
         }
+    }
+    out.push('\n');
+    for line in table.lines() {
+        write!(out, "\n{}", line.trim_end()).unwrap();
     }
     out
 }

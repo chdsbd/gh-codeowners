@@ -294,6 +294,24 @@ fn counting_lists_problems_after_the_counts() {
 }
 
 #[test]
+fn aligns_wide_characters_in_patterns() {
+    let (status, stdout, _) = run_with_stdin(
+        &repo("wide"),
+        &["list", "--codeowners", "-"],
+        "* @acme/all\n/文档目录/ @acme/docs\n/missing/ @acme/nobody\n",
+    );
+    assert_eq!(status, 0);
+    assert_snapshot!(stdout, @r"
+    <stdin>: 3 rules, 5 files, 0 files with no owner, 2 rules owning no files
+
+    line  files  pattern
+       1      5  *
+       2      0  /文档目录/  no files match
+       3      0  /missing/   no files match
+    ");
+}
+
+#[test]
 fn check_json_lists_problems() {
     let (status, stdout, _) = run_with_stdin(
         &repo("check-json"),
