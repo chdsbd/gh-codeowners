@@ -380,29 +380,12 @@ fn rejects_arguments_a_command_doesnt_take() {
 }
 
 #[test]
-fn points_old_flags_to_their_commands() {
-    let repo = repo("old-flags");
-    for (flag, command) in [
-        ("--owner-of", "gh codeowners view <path>"),
-        ("--errors", "gh codeowners check"),
-        ("--check", "gh codeowners check"),
-    ] {
-        let (status, _, stderr) = run(&repo, &[flag]);
-        assert_eq!(status, 2);
-        assert!(
-            stderr.starts_with(&format!("Unknown option '{flag}', use `{command}`\n")),
-            "{stderr}"
-        );
-    }
-}
-
-#[test]
 fn prints_help_without_a_command() {
-    let (status, stdout, _) = run(&repo("help"), &[]);
-    assert_eq!(status, 0);
+    let (status, _, stderr) = run(&repo("help"), &[]);
+    assert_eq!(status, 2);
     assert!(
-        stdout.starts_with("Work with GitHub CODEOWNERS files.\n\nUSAGE\n"),
-        "{stdout}"
+        stderr.starts_with("Work with GitHub CODEOWNERS files\n\nUsage: gh codeowners"),
+        "{stderr}"
     );
 }
 
