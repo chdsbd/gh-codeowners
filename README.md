@@ -2,7 +2,9 @@
 
 A CLI for [GitHub CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
 
-Find a file's owner, count the files owned by a rule, and find errors in your CODEOWNERS file.
+- Find a file's owner.
+- Count the files owned by a rule.
+- Find errors in your CODEOWNERS file.
 
 ## Install
 
@@ -11,7 +13,6 @@ As a [GitHub CLI](https://cli.github.com) extension (recommended):
 ```bash
 gh extension install chdsbd/gh-codeowners
 
-# call as `gh codeowners` instead of `gh-codeowners`
 gh codeowners list
 gh codeowners list --unused
 gh codeowners view src/app.ts
@@ -42,8 +43,6 @@ gh codeowners <command> [flags]
                        fields, lists the ones the command has.
 ```
 
-`gh codeowners <command> --help` shows each command's flags and JSON fields.
-
 ### Find a file's owner
 
 ```bash
@@ -71,3 +70,37 @@ gh codeowners check --unused
 ## Matching
 
 See [`SPECIFICATION.md`](SPECIFICATION.md) for matching behavior.
+
+## Comparison
+
+How often each library matches the same files as GitHub, across the 4,157 CODEOWNERS lines and paths recorded from GitHub in [codeowners-comparison](https://github.com/chdsbd/codeowners-comparison):
+
+| Library | Language | Agrees with GitHub |
+|---|---|---|
+| gh-codeowners | Rust | 4157/4157 |
+| [sbdchd/codeowners](https://github.com/sbdchd/codeowners) | Python | 4039/4157 |
+| [hmarr/codeowners](https://github.com/hmarr/codeowners) | Go | 4021/4157 |
+| [snyk/github-codeowners](https://github.com/snyk/github-codeowners), via the [chdsbd/github-codeowners](https://github.com/chdsbd/github-codeowners) fork | Node | 4005/4157 |
+| [codeowners-rs](https://crates.io/crates/codeowners-rs) | Rust | 4004/4157 |
+
+Where they differ:
+
+| GitHub behavior | gh-codeowners | sbdchd | hmarr | snyk | codeowners-rs |
+|---|---|---|---|---|---|
+| `!secrets` owns files named `secrets`, not directories | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `!important/notes.md` owns the file with the `!` | ✓ | ✓ | ✗ | ✗ | ✓ |
+| `?` matches one byte, not one character | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `**/` and `/**/` own every file | ✓ | ✗ | ✗ | ✗ | ✓ |
+| `***` skips the line | ✓ | ✗ | ✓ | ✗ | ✗ |
+| `{a,b}` matches literally | ✓ | ✓ | ✗ | ✓ | ✓ |
+| Unescaped `[` or `]` skips the line | ✓ | ✓ | ✗ | ✓ | ✗ |
+| `\[draft\]*` without a slash matches nothing | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Unpaired escaped brackets match nothing | ✓ | ✗ | ✗ | ✗ | ✗ |
+| Escaping anything but space, tab, `#`, `[`, `]` or `\` skips the line | ✓ | ✗ | ✗ | ✗ | ✗ |
+| `My\ Documents/` matches the space | ✓ | ✓ | ✓ | ✗ | ✓ |
+| `win\\path` matches a backslash | ✓ | ✓ | ✓ | ✓ | ✗ |
+| Unescaped `#` starts a comment mid-pattern | ✓ | ✗ | ✓ | ✓ | ✓ |
+| `\#notes` matches `#notes` | ✓ | ✓ | ✗ | ✗ | ✓ |
+| Patterns are case-sensitive | ✓ | ✓ | ✓ | ✗ | ✓ |
+| Non-ASCII patterns like `日本語/` | ✓ | ✓ | ✗ | ✓ | ✓ |
+
