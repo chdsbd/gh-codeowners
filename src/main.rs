@@ -35,8 +35,8 @@ struct Cli {
 enum Command {
     /// Check CODEOWNERS for lines GitHub rejects
     ///
-    /// Also warns about lines that likely don't do what they look like. Exits
-    /// with 1 if CODEOWNERS has errors, and 2 if the command fails.
+    /// Warns about lines that are misleading. Exits with 1 if CODEOWNERS has errors, 
+    /// and 2 if the command fails.
     Check {
         /// Report rules that own no files as errors too
         #[arg(long)]
@@ -45,11 +45,10 @@ enum Command {
         #[arg(short = 'j', long, value_name = "n")]
         threads: Option<NonZeroUsize>,
     },
-    /// List each rule with how many files it owns
+    /// List each rule and how many files it owns
     ///
-    /// A file counts towards the last rule that matches it, like on GitHub, so
-    /// a rule can match files and still own none of them. Files are the ones in
-    /// git's index. Any problems `check` reports follow the counts.
+    /// File are counted from git's index.
+    /// Problems are reported after the counts.
     List {
         /// Only list rules that own no files
         #[arg(long)]
@@ -60,9 +59,8 @@ enum Command {
     },
     /// Show the rule that owns each path
     ///
-    /// Like GitHub shows when you hover over a file's code owners icon. Paths
-    /// needn't be tracked, and relative paths are relative to the current
-    /// directory.
+    /// Output matches GitHub's code owners icon tooltip. 
+    /// Paths don't need to be tracked by git.
     View {
         #[arg(required = true, value_name = "path")]
         paths: Vec<String>,
@@ -164,8 +162,6 @@ fn repo_display(root: &Path, path: &Path) -> String {
     }
 }
 
-/// A warning that GitHub ignores another CODEOWNERS file's rules, about
-/// `subject`, the file GitHub uses.
 fn ignored_warning(loaded: &Loaded, subject: &str) -> Option<String> {
     let ignored = loaded.ignored.as_ref()?;
     let ignored = repo_display(&loaded.root, ignored);
@@ -302,8 +298,6 @@ fn format_text_with_problems(stats: &Stats, rules: &[&RuleStats]) -> String {
     out
 }
 
-/// `path` relative to `root`, with `/` separators. Relative paths are
-/// relative to the current directory.
 fn repo_path(root: &Path, path: &str) -> Result<String, String> {
     let given = normalize(&absolute(Path::new(path)));
     let relative = match given.strip_prefix(normalize(&absolute(root))) {
@@ -325,8 +319,6 @@ fn repo_path(root: &Path, path: &str) -> Result<String, String> {
     Ok(relative)
 }
 
-/// `path` without `.` and `..` components, without looking at the file
-/// system.
 fn normalize(path: &Path) -> PathBuf {
     let mut normal = PathBuf::new();
     for component in path.components() {
@@ -341,7 +333,6 @@ fn normalize(path: &Path) -> PathBuf {
     normal
 }
 
-/// `path` with symlinks resolved, even if the file doesn't exist yet.
 fn real_path(path: &Path) -> Option<PathBuf> {
     std::fs::canonicalize(path)
         .ok()
