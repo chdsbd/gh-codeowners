@@ -10,7 +10,6 @@ use gh_codeowners::codeowners::{
 use gh_codeowners::counter::Rule;
 use gh_codeowners::report::{Status, ownership_json, problem_json, rule_json, to_json};
 use gh_codeowners::{count_tracked_files, owners_of};
-use serde::Serialize;
 
 // Help is laid out like gh's own, so `gh codeowners` reads like any other
 // gh command.
@@ -60,15 +59,6 @@ impl Command {
         }
     }
 
-    /// The fields `--json` accepts, in the order gh lists them.
-    fn json_fields(self) -> &'static [&'static str] {
-        match self {
-            Command::Check => &["line", "message", "severity"],
-            Command::List => &["files", "line", "owners", "pattern", "status"],
-            Command::View => &["line", "owners", "path", "pattern"],
-        }
-    }
-
     fn help(self) -> String {
         let (about, usage) = match self {
             Command::Check => (
@@ -87,7 +77,7 @@ USAGE
 
 FLAGS
   -j, --threads <n>   Threads to count with, for --unused (default: one per CPU)
-      --json fields   Output JSON with the specified fields
+      --json          Output JSON
       --unused        Report rules that own no files as errors",
                 "EXAMPLES
   $ gh codeowners check
@@ -105,11 +95,11 @@ USAGE
 
 FLAGS
   -j, --threads <n>   Threads to count with (default: one per CPU)
-      --json fields   Output JSON with the specified fields
+      --json          Output JSON
       --unused        Only list rules that own no files",
                 "EXAMPLES
   $ gh codeowners list
-  $ gh codeowners list --unused --json line,pattern",
+  $ gh codeowners list --unused --json",
             ),
             Command::View => (
                 "Show the rule that owns each path, like GitHub shows when you hover over
@@ -120,15 +110,14 @@ USAGE
   gh codeowners view <path>... [flags]
 
 FLAGS
-      --json fields   Output JSON with the specified fields",
+      --json          Output JSON",
                 "EXAMPLES
   $ gh codeowners view src/app.ts
-  $ gh codeowners view src/components --json owners",
+  $ gh codeowners view src/components --json",
             ),
         };
         format!(
-            "{about}\n\n{INHERITED_FLAGS}\n\nJSON FIELDS\n  {}\n\n{usage}\n\nLEARN MORE\n  Use `gh codeowners <command> --help` for more information about a command.",
-            self.json_fields().join(", ")
+            "{about}\n\n{INHERITED_FLAGS}\n\n{usage}\n\nLEARN MORE\n  Use `gh codeowners <command> --help` for more information about a command."
         )
     }
 }
@@ -153,7 +142,7 @@ struct Args {
     codeowners: Option<PathBuf>,
     paths: Vec<String>,
     unused: bool,
-    json: Option<Vec<String>>,
+    json: bool,
     threads: Option<usize>,
 }
 
@@ -192,32 +181,6 @@ fn unknown_option(arg: &str, help: String) -> UsageError {
     }
 }
 
-/// The fields for `--json`, which must be ones `command` has.
-fn json_fields(command: Command, value: Option<String>) -> Result<Vec<String>, UsageError> {
-    let available = command.json_fields();
-    let list = || format!("  {}", available.join("\n  "));
-    let Some(value) = value.filter(|v| !v.is_empty() && !v.starts_with('-')) else {
-        return Err(usage_error(
-            format!(
-                "Specify one or more comma-separated fields for `--json`:\n{}",
-                list()
-            ),
-            String::new(),
-        ));
-    };
-    let fields: Vec<String> = value.split(',').map(str::to_string).collect();
-    if let Some(unknown) = fields.iter().find(|f| !available.contains(&f.as_str())) {
-        return Err(usage_error(
-            format!(
-                "Unknown JSON field: \"{unknown}\"\nAvailable fields:\n{}",
-                list()
-            ),
-            String::new(),
-        ));
-    }
-    Ok(fields)
-}
-
 fn parse_args(argv: Vec<String>) -> Result<Parsed, UsageError> {
     let mut iter = argv.into_iter();
     let command = match iter.next().as_deref() {
@@ -241,7 +204,7 @@ fn parse_args(argv: Vec<String>) -> Result<Parsed, UsageError> {
         codeowners: None,
         paths: Vec::new(),
         unused: false,
-        json: None,
+        json: false,
         threads: None,
     };
     let counts = matches!(command, Command::Check | Command::List);
@@ -263,11 +226,7 @@ fn parse_args(argv: Vec<String>) -> Result<Parsed, UsageError> {
         match name.as_str() {
             "--codeowners" => args.codeowners = Some(PathBuf::from(value("--codeowners")?)),
             "--root" => args.root = Some(PathBuf::from(value("--root")?)),
-            "--json" => {
-                // Without a value, list the fields, like gh does.
-                let fields = inline.clone().or_else(|| iter.next());
-                args.json = Some(json_fields(command, fields)?);
-            }
+            "--json" => args.json = true,
             "-j" | "--threads" if counts => {
                 let n = value("--threads")?;
                 args.threads = Some(n.parse().ok().filter(|&n| n > 0).ok_or_else(|| {
@@ -509,25 +468,6 @@ fn format_text_with_problems(stats: &Stats, rules: &[&RuleStats]) -> String {
     out
 }
 
-/// `items` as a JSON array of objects with only `fields`, like gh's `--json`.
-fn select_json<T: Serialize>(items: &[T], fields: &[String]) -> String {
-    let items: Vec<serde_json::Map<String, serde_json::Value>> = items
-        .iter()
-        .map(|item| {
-            let serde_json::Value::Object(mut object) =
-                serde_json::to_value(item).expect("JSON output")
-            else {
-                unreachable!("items serialize as objects")
-            };
-            fields
-                .iter()
-                .filter_map(|field| Some((field.clone(), object.remove(field)?)))
-                .collect()
-        })
-        .collect();
-    to_json(&items)
-}
-
 /// `path` relative to `root`, with `/` separators. Relative paths are
 /// relative to the current directory.
 fn repo_path(root: &Path, path: &str) -> Result<String, String> {
@@ -674,13 +614,12 @@ fn run(args: &Args) -> Result<ExitCode, String> {
     let loaded = load(args)?;
     if args.command == Command::Check {
         let problems = check_problems(args, &loaded)?;
-        print_stdout(&match &args.json {
-            Some(fields) => select_json(
-                &problems.iter().map(problem_json).collect::<Vec<_>>(),
-                fields,
-            ),
-            None if problems.is_empty() => format!("{}: no problems", display_path(&loaded)),
-            None => problem_lines(&display_path(&loaded), &problems),
+        print_stdout(&if args.json {
+            to_json(&problems.iter().map(problem_json).collect::<Vec<_>>())
+        } else if problems.is_empty() {
+            format!("{}: no problems", display_path(&loaded))
+        } else {
+            problem_lines(&display_path(&loaded), &problems)
         })?;
         return Ok(if problems.iter().any(|p| p.error) {
             ExitCode::from(1)
@@ -694,15 +633,15 @@ fn run(args: &Args) -> Result<ExitCode, String> {
     }
     if args.command == Command::View {
         let files = ownership(args, &loaded)?;
-        print_stdout(&match &args.json {
-            Some(fields) => select_json(
+        print_stdout(&if args.json {
+            to_json(
                 &files
                     .iter()
                     .map(|(path, rule)| ownership_json(path, rule.as_ref()))
                     .collect::<Vec<_>>(),
-                fields,
-            ),
-            None => format_ownership(&loaded, &files),
+            )
+        } else {
+            format_ownership(&loaded, &files)
         })?;
         return Ok(ExitCode::SUCCESS);
     }
@@ -712,15 +651,15 @@ fn run(args: &Args) -> Result<ExitCode, String> {
         .iter()
         .filter(|r| !args.unused || r.status != Status::Active)
         .collect();
-    print_stdout(&match &args.json {
-        Some(fields) => select_json(
+    print_stdout(&if args.json {
+        to_json(
             &rules
                 .iter()
                 .map(|r| rule_json(&r.rule, r.files, r.status))
                 .collect::<Vec<_>>(),
-            fields,
-        ),
-        None => format_text_with_problems(&stats, &rules),
+        )
+    } else {
+        format_text_with_problems(&stats, &rules)
     })?;
     Ok(ExitCode::SUCCESS)
 }
