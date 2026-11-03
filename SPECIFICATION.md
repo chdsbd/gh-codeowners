@@ -18,6 +18,7 @@ The last rule that matches a file sets its owners, so later rules override earli
 | Escaped brackets also match the backslashes literally, but not a mix of the two. | `x\[id\]` owns `x\[id\]`, not `x\[id]` |
 | An unescaped `#` starts a comment anywhere, even inside a pattern. | `/src/C#/ @acme/x` is the pattern `/src/C` with no owners |
 | `\#` escapes a `#`, though GitHub's docs say it doesn't. | `/src/C\#/` owns `src/C#/x` |
+| A `\` at the end of a pattern escapes nothing and is dropped. With a slash, the pattern also matches it as a literal `\`. | `a\` owns `x/a`, not `a\`; `/a\` owns `a` and `a\` |
 
 ### Negation
 
@@ -33,7 +34,7 @@ There's no negation. What a `!` means depends on whether the pattern has a slash
 **Lines GitHub rejects as invalid.** These are lines whose pattern has:
 
 - an unescaped `[` or `]`
-- a `\` that isn't followed by a space, tab, `#`, `[`, `]` or `\`, including one at the end of the pattern
+- a `\` that isn't followed by a space, tab, `#`, `[`, `]` or `\`, except one at the end of the pattern
 - three or more `*`s in a row
 
 **Lines GitHub accepts but never matches.** These are lines whose pattern, after dropping a `!` from one without a slash, has:
@@ -41,6 +42,7 @@ There's no negation. What a `!` means depends on whether the pattern has a slash
 - a different number of `\[`s and `\]`s
 - a `\[` at the start and no slash
 - nothing but slashes, like `/`
+- a `.` or `..` segment, like `./src/`, since paths in git never have one
 
 ### Owners
 
