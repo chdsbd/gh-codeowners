@@ -4,7 +4,7 @@ use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use gh_codeowners::codeowners::{
     CodeownersRule, LineProblem, MAX_CODEOWNERS_BYTES, find_codeowners, find_problems,
@@ -16,7 +16,7 @@ use gh_codeowners::{count_tracked_files, owners_of};
 
 /// Work with GitHub CODEOWNERS files
 #[derive(Parser)]
-#[command(bin_name = "gh codeowners", version)]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -454,7 +454,7 @@ fn run(cli: &Cli) -> Result<ExitCode, String> {
     if !matches!(cli.command, Command::Check { .. })
         && let Some(message) = ignored_warning(&loaded, &display_path(&loaded))
     {
-        eprintln!("gh-codeowners: warning: {message}");
+        eprintln!("{}: warning: {message}", program_name());
     }
     match &cli.command {
         Command::Check { unused, threads } => {
@@ -505,9 +505,21 @@ fn run(cli: &Cli) -> Result<ExitCode, String> {
     Ok(ExitCode::SUCCESS)
 }
 
+/// How the user ran this: `gh codeowners` when gh runs it as an extension,
+/// which gh signals with `GH_EXTENSION`.
+fn program_name() -> &'static str {
+    if std::env::var_os("GH_EXTENSION").is_some() {
+        "gh codeowners"
+    } else {
+        "gh-codeowners"
+    }
+}
+
 fn main() -> ExitCode {
-    run(&Cli::parse()).unwrap_or_else(|message| {
-        eprintln!("gh-codeowners: {message}");
+    let matches = Cli::command().bin_name(program_name()).get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    run(&cli).unwrap_or_else(|message| {
+        eprintln!("{}: {message}", program_name());
         ExitCode::from(2)
     })
 }

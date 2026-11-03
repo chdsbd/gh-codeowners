@@ -384,9 +384,22 @@ fn prints_help_without_a_command() {
     let (status, _, stderr) = run(&repo("help"), &[]);
     assert_eq!(status, 2);
     assert!(
-        stderr.starts_with("Work with GitHub CODEOWNERS files\n\nUsage: gh codeowners"),
+        stderr.starts_with("Work with GitHub CODEOWNERS files\n\nUsage: gh-codeowners "),
         "{stderr}"
     );
+}
+
+#[test]
+fn calls_itself_gh_codeowners_as_a_gh_extension() {
+    let repo = repo("extension");
+    let output = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
+        .args(["view"])
+        .env("GH_EXTENSION", "1")
+        .current_dir(&repo.0)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("Usage: gh codeowners view"), "{stderr}");
 }
 
 fn run_in(dir: &Path, args: &[&str]) -> (i32, String, String) {
