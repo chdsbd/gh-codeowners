@@ -1,7 +1,10 @@
 use std::fmt::Write as _;
 use std::io::{self, Write as _};
+use std::num::NonZeroUsize;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+
+use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use gh_codeowners::codeowners::{
     CodeownersRule, LineProblem, MAX_CODEOWNERS_BYTES, find_codeowners, find_problems,
@@ -11,115 +14,59 @@ use gh_codeowners::counter::Rule;
 use gh_codeowners::report::{Status, ownership_json, problem_json, rule_json, to_json};
 use gh_codeowners::{count_tracked_files, owners_of};
 
-// Help is laid out like gh's own, so `gh codeowners` reads like any other
-// gh command.
-const HELP: &str = "Work with GitHub CODEOWNERS files.
-
-USAGE
-  gh codeowners <command> [flags]
-
-COMMANDS
-  check:  Check CODEOWNERS for lines GitHub rejects
-  list:   List each rule with how many files it owns
-  view:   Show the rule that owns each path
-
-FLAGS
-  --help      Show help for command
-  --version   Show gh-codeowners version
-
-EXAMPLES
-  $ gh codeowners list --unused
-  $ gh codeowners view src/app.ts
-  $ gh codeowners check
-
-LEARN MORE
-  Use `gh codeowners <command> --help` for more information about a command.";
-
-const INHERITED_FLAGS: &str = "INHERITED FLAGS
-      --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one
-                           GitHub would use)
-      --help               Show help for command
-      --root <dir>         Repository root (default: the git repository
-                           containing the current directory)";
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Command {
-    Check,
-    List,
-    View,
+/// Work with GitHub CODEOWNERS files
+#[derive(Parser)]
+#[command(version)]
+struct Cli {
+    #[command(subcommand)]
+    command: Command,
+    /// CODEOWNERS file, or - for stdin (default: the one GitHub would use)
+    #[arg(long, global = true, value_name = "path")]
+    codeowners: Option<PathBuf>,
+    /// Repository root (default: the repository containing the current directory)
+    #[arg(long, global = true, value_name = "dir")]
+    root: Option<PathBuf>,
+    /// Output JSON
+    #[arg(long, global = true)]
+    json: bool,
 }
 
-impl Command {
-    fn from_name(name: &str) -> Option<Command> {
-        match name {
-            "check" => Some(Command::Check),
-            "list" => Some(Command::List),
-            "view" => Some(Command::View),
-            _ => None,
-        }
-    }
-
-    fn help(self) -> String {
-        let (about, usage) = match self {
-            Command::Check => (
-                "Check CODEOWNERS for lines GitHub rejects, and lines that likely don't
-do what they look like, like patterns that match nothing.
-
-With --unused, rules that own no files are errors too.
-
-Exit codes:
-  0: No errors
-  1: CODEOWNERS has errors
-  2: The command failed
-
-USAGE
-  gh codeowners check [flags]
-
-FLAGS
-  -j, --threads <n>   Threads to count with, for --unused (default: one per CPU)
-      --json          Output JSON
-      --unused        Report rules that own no files as errors",
-                "EXAMPLES
-  $ gh codeowners check
-  $ gh codeowners check --unused",
-            ),
-            Command::List => (
-                "List each CODEOWNERS rule with how many files it owns.
-
-A file counts towards the last rule that matches it, like on GitHub, so a
-rule can match files and still own none of them. Files are the ones in
-git's index. Any problems `gh codeowners check` reports follow the counts.
-
-USAGE
-  gh codeowners list [flags]
-
-FLAGS
-  -j, --threads <n>   Threads to count with (default: one per CPU)
-      --json          Output JSON
-      --unused        Only list rules that own no files",
-                "EXAMPLES
-  $ gh codeowners list
-  $ gh codeowners list --unused --json",
-            ),
-            Command::View => (
-                "Show the rule that owns each path, like GitHub shows when you hover over
-a file's code owners icon. Paths needn't be tracked, and relative paths
-are relative to the current directory.
-
-USAGE
-  gh codeowners view <path>... [flags]
-
-FLAGS
-      --json          Output JSON",
-                "EXAMPLES
-  $ gh codeowners view src/app.ts
-  $ gh codeowners view src/components --json",
-            ),
-        };
-        format!(
-            "{about}\n\n{INHERITED_FLAGS}\n\n{usage}\n\nLEARN MORE\n  Use `gh codeowners <command> --help` for more information about a command."
-        )
-    }
+#[derive(Subcommand)]
+enum Command {
+    /// Check CODEOWNERS for lines GitHub rejects
+    ///
+    /// Also warns about lines that likely don't do what they look like. Exits
+    /// with 1 if CODEOWNERS has errors, and 2 if the command fails.
+    Check {
+        /// Report rules that own no files as errors too
+        #[arg(long)]
+        unused: bool,
+        /// Threads to count with, for --unused (default: one per CPU)
+        #[arg(short = 'j', long, value_name = "n")]
+        threads: Option<NonZeroUsize>,
+    },
+    /// List each rule with how many files it owns
+    ///
+    /// A file counts towards the last rule that matches it, like on GitHub, so
+    /// a rule can match files and still own none of them. Files are the ones in
+    /// git's index. Any problems `check` reports follow the counts.
+    List {
+        /// Only list rules that own no files
+        #[arg(long)]
+        unused: bool,
+        /// Threads to count with (default: one per CPU)
+        #[arg(short = 'j', long, value_name = "n")]
+        threads: Option<NonZeroUsize>,
+    },
+    /// Show the rule that owns each path
+    ///
+    /// Like GitHub shows when you hover over a file's code owners icon. Paths
+    /// needn't be tracked, and relative paths are relative to the current
+    /// directory.
+    View {
+        #[arg(required = true, value_name = "path")]
+        paths: Vec<String>,
+    },
 }
 
 struct RuleStats {
@@ -134,119 +81,6 @@ struct Stats {
     unowned: usize,
     rules: Vec<RuleStats>,
     problems: Vec<LineProblem>,
-}
-
-struct Args {
-    command: Command,
-    root: Option<PathBuf>,
-    codeowners: Option<PathBuf>,
-    paths: Vec<String>,
-    unused: bool,
-    json: bool,
-    threads: Option<usize>,
-}
-
-enum Parsed {
-    Run(Args),
-    Exit(ExitCode),
-}
-
-/// A usage error, and the help to show with it.
-struct UsageError {
-    message: String,
-    help: String,
-}
-
-fn usage_error(message: impl Into<String>, help: String) -> UsageError {
-    UsageError {
-        message: message.into(),
-        help,
-    }
-}
-
-/// Where a flag from before subcommands went.
-fn moved_flag(flag: &str) -> Option<&'static str> {
-    match flag {
-        "--owner-of" => Some("gh codeowners view <path>"),
-        "--errors" | "--check" => Some("gh codeowners check"),
-        _ => None,
-    }
-}
-
-fn unknown_option(arg: &str, help: String) -> UsageError {
-    let name = arg.split_once('=').map_or(arg, |(name, _)| name);
-    match moved_flag(name) {
-        Some(command) => usage_error(format!("Unknown option '{name}', use `{command}`"), help),
-        None => usage_error(format!("Unknown option '{arg}'"), help),
-    }
-}
-
-fn parse_args(argv: Vec<String>) -> Result<Parsed, UsageError> {
-    let mut iter = argv.into_iter();
-    let command = match iter.next().as_deref() {
-        None | Some("-h" | "--help") => {
-            print_stdout(HELP).map_err(|message| usage_error(message, String::new()))?;
-            return Ok(Parsed::Exit(ExitCode::SUCCESS));
-        }
-        Some("--version") => {
-            print_stdout(env!("CARGO_PKG_VERSION"))
-                .map_err(|message| usage_error(message, String::new()))?;
-            return Ok(Parsed::Exit(ExitCode::SUCCESS));
-        }
-        Some(arg) if arg.starts_with('-') => return Err(unknown_option(arg, HELP.to_string())),
-        Some(name) => Command::from_name(name)
-            .ok_or_else(|| usage_error(format!("Unknown command '{name}'"), HELP.to_string()))?,
-    };
-    let help = command.help();
-    let mut args = Args {
-        command,
-        root: None,
-        codeowners: None,
-        paths: Vec::new(),
-        unused: false,
-        json: false,
-        threads: None,
-    };
-    let counts = matches!(command, Command::Check | Command::List);
-    while let Some(arg) = iter.next() {
-        let (name, inline) = match arg.split_once('=') {
-            Some((name, value)) if name.starts_with("--") => {
-                (name.to_string(), Some(value.to_string()))
-            }
-            _ => (arg.clone(), None),
-        };
-        let mut value = |name: &str| {
-            inline.clone().or_else(|| iter.next()).ok_or_else(|| {
-                usage_error(
-                    format!("Option '{name} <value>' argument missing"),
-                    help.clone(),
-                )
-            })
-        };
-        match name.as_str() {
-            "--codeowners" => args.codeowners = Some(PathBuf::from(value("--codeowners")?)),
-            "--root" => args.root = Some(PathBuf::from(value("--root")?)),
-            "--json" => args.json = true,
-            "-j" | "--threads" if counts => {
-                let n = value("--threads")?;
-                args.threads = Some(n.parse().ok().filter(|&n| n > 0).ok_or_else(|| {
-                    usage_error(format!("Invalid thread count '{n}'"), help.clone())
-                })?);
-            }
-            "--unused" if counts => args.unused = true,
-            "-h" | "--help" => {
-                print_stdout(&help).map_err(|message| usage_error(message, String::new()))?;
-                return Ok(Parsed::Exit(ExitCode::SUCCESS));
-            }
-            _ if arg.starts_with('-') && arg.len() > 1 => return Err(unknown_option(&arg, help)),
-            _ if command == Command::View => args.paths.push(arg),
-            _ => return Err(usage_error(format!("Unexpected argument '{arg}'"), help)),
-        }
-    }
-    if command == Command::View && args.paths.is_empty() {
-        return Err(usage_error("Expected at least one path", help));
-    }
-    Ok(Parsed::Run(args))
 }
 
 fn absolute(path: &Path) -> PathBuf {
@@ -266,16 +100,16 @@ fn is_stdin(path: &Path) -> bool {
     path == Path::new("-")
 }
 
-fn load(args: &Args) -> Result<Loaded, String> {
+fn load(cli: &Cli) -> Result<Loaded, String> {
     // The repository containing the current directory, or else the directory.
     let current_root = || {
         let current_dir = std::env::current_dir().unwrap_or_default();
         find_repo_root(&current_dir).unwrap_or(current_dir)
     };
-    let codeowners = match &args.codeowners {
+    let codeowners = match &cli.codeowners {
         Some(path) => path.clone(),
         None => {
-            let root = args.root.clone().unwrap_or_else(current_root);
+            let root = cli.root.clone().unwrap_or_else(current_root);
             find_codeowners(&root)
                 .map(|path| {
                     path.strip_prefix(".")
@@ -285,7 +119,7 @@ fn load(args: &Args) -> Result<Loaded, String> {
                 .ok_or_else(|| format!("No CODEOWNERS file found in {}", root.display()))?
         }
     };
-    let root = match &args.root {
+    let root = match &cli.root {
         Some(root) => root.clone(),
         None if is_stdin(&codeowners) => current_root(),
         None => repo_root_for_codeowners(&absolute(&codeowners)),
@@ -296,7 +130,7 @@ fn load(args: &Args) -> Result<Loaded, String> {
         std::fs::read_to_string(&codeowners)
             .map_err(|e| format!("{}: {e}", codeowners.display()))?
     };
-    let ignored = match args.codeowners {
+    let ignored = match cli.codeowners {
         Some(_) => None,
         None => ignored_codeowners(&root, &text),
     };
@@ -365,12 +199,12 @@ fn rule_list(rules: &[CodeownersRule]) -> Vec<Rule> {
         .collect()
 }
 
-fn stats_for(args: &Args, loaded: &Loaded) -> Result<Stats, String> {
+fn stats_for(loaded: &Loaded, threads: Option<NonZeroUsize>) -> Result<Stats, String> {
     check_size(loaded)?;
     let rules = parse_codeowners(&loaded.text);
-    let threads = args
-        .threads
-        .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()));
+    let threads = threads
+        .or_else(|| std::thread::available_parallelism().ok())
+        .map_or(1, NonZeroUsize::get);
     let counts = count_tracked_files(&loaded.root, &rule_list(&rules), threads)
         .map_err(|e| e.to_string())?;
     Ok(Stats {
@@ -516,13 +350,12 @@ fn real_path(path: &Path) -> Option<PathBuf> {
 
 /// Each path to view, and the rule that owns it.
 fn ownership(
-    args: &Args,
     loaded: &Loaded,
+    paths: &[String],
 ) -> Result<Vec<(String, Option<CodeownersRule>)>, String> {
     check_size(loaded)?;
     let rules = parse_codeowners(&loaded.text);
-    let paths = args
-        .paths
+    let paths = paths
         .iter()
         .map(|path| repo_path(&loaded.root, path))
         .collect::<Result<Vec<_>, _>>()?;
@@ -571,7 +404,11 @@ fn problem_lines(display: &str, problems: &[LineProblem]) -> String {
 
 /// Everything `check` reports: the lines GitHub rejects or that likely don't
 /// do what they look like, and with --unused, rules that own no files.
-fn check_problems(args: &Args, loaded: &Loaded) -> Result<Vec<LineProblem>, String> {
+fn check_problems(
+    loaded: &Loaded,
+    unused: bool,
+    threads: Option<NonZeroUsize>,
+) -> Result<Vec<LineProblem>, String> {
     let mut problems = find_problems(&loaded.text);
     if let Some(message) = ignored_warning(loaded, "this file") {
         problems.push(LineProblem {
@@ -581,8 +418,8 @@ fn check_problems(args: &Args, loaded: &Loaded) -> Result<Vec<LineProblem>, Stri
         });
     }
     // A file too big for GitHub already has an error, and nothing to count.
-    if args.unused && !too_big(loaded) {
-        let stats = stats_for(args, loaded)?;
+    if unused && !too_big(loaded) {
+        let stats = stats_for(loaded, threads)?;
         for r in stats.rules.iter().filter(|r| r.status != Status::Active) {
             // A line already reported likely explains why it owns nothing.
             if problems.iter().any(|p| p.lineno == Some(r.rule.lineno)) {
@@ -610,75 +447,79 @@ fn print_stdout(text: &str) -> Result<(), String> {
     }
 }
 
-fn run(args: &Args) -> Result<ExitCode, String> {
-    let loaded = load(args)?;
-    if args.command == Command::Check {
-        let problems = check_problems(args, &loaded)?;
-        print_stdout(&if args.json {
-            to_json(&problems.iter().map(problem_json).collect::<Vec<_>>())
-        } else if problems.is_empty() {
-            format!("{}: no problems", display_path(&loaded))
-        } else {
-            problem_lines(&display_path(&loaded), &problems)
-        })?;
-        return Ok(if problems.iter().any(|p| p.error) {
-            ExitCode::from(1)
-        } else {
-            ExitCode::SUCCESS
-        });
-    }
+fn run(cli: &Cli) -> Result<ExitCode, String> {
+    let loaded = load(cli)?;
     // On stderr, so it doesn't mix with output meant for other programs.
-    if let Some(message) = ignored_warning(&loaded, &display_path(&loaded)) {
-        eprintln!("gh-codeowners: warning: {message}");
+    // `check` reports it as a problem instead.
+    if !matches!(cli.command, Command::Check { .. })
+        && let Some(message) = ignored_warning(&loaded, &display_path(&loaded))
+    {
+        eprintln!("{}: warning: {message}", program_name());
     }
-    if args.command == Command::View {
-        let files = ownership(args, &loaded)?;
-        print_stdout(&if args.json {
-            to_json(
-                &files
-                    .iter()
-                    .map(|(path, rule)| ownership_json(path, rule.as_ref()))
-                    .collect::<Vec<_>>(),
-            )
-        } else {
-            format_ownership(&loaded, &files)
-        })?;
-        return Ok(ExitCode::SUCCESS);
-    }
-    let stats = stats_for(args, &loaded)?;
-    let rules: Vec<&RuleStats> = stats
-        .rules
-        .iter()
-        .filter(|r| !args.unused || r.status != Status::Active)
-        .collect();
-    print_stdout(&if args.json {
-        to_json(
-            &rules
+    match &cli.command {
+        Command::Check { unused, threads } => {
+            let problems = check_problems(&loaded, *unused, *threads)?;
+            print_stdout(&if cli.json {
+                to_json(&problems.iter().map(problem_json).collect::<Vec<_>>())
+            } else if problems.is_empty() {
+                format!("{}: no problems", display_path(&loaded))
+            } else {
+                problem_lines(&display_path(&loaded), &problems)
+            })?;
+            if problems.iter().any(|p| p.error) {
+                return Ok(ExitCode::from(1));
+            }
+        }
+        Command::View { paths } => {
+            let files = ownership(&loaded, paths)?;
+            print_stdout(&if cli.json {
+                to_json(
+                    &files
+                        .iter()
+                        .map(|(path, rule)| ownership_json(path, rule.as_ref()))
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                format_ownership(&loaded, &files)
+            })?;
+        }
+        Command::List { unused, threads } => {
+            let stats = stats_for(&loaded, *threads)?;
+            let rules: Vec<&RuleStats> = stats
+                .rules
                 .iter()
-                .map(|r| rule_json(&r.rule, r.files, r.status))
-                .collect::<Vec<_>>(),
-        )
-    } else {
-        format_text_with_problems(&stats, &rules)
-    })?;
+                .filter(|r| !unused || r.status != Status::Active)
+                .collect();
+            print_stdout(&if cli.json {
+                to_json(
+                    &rules
+                        .iter()
+                        .map(|r| rule_json(&r.rule, r.files, r.status))
+                        .collect::<Vec<_>>(),
+                )
+            } else {
+                format_text_with_problems(&stats, &rules)
+            })?;
+        }
+    }
     Ok(ExitCode::SUCCESS)
 }
 
+/// How the user ran this: `gh codeowners` when gh runs it as an extension,
+/// which gh signals with `GH_EXTENSION`.
+fn program_name() -> &'static str {
+    if std::env::var_os("GH_EXTENSION").is_some() {
+        "gh codeowners"
+    } else {
+        "gh-codeowners"
+    }
+}
+
 fn main() -> ExitCode {
-    let args = match parse_args(std::env::args().skip(1).collect()) {
-        Ok(Parsed::Run(args)) => args,
-        Ok(Parsed::Exit(code)) => return code,
-        Err(UsageError { message, help }) if help.is_empty() => {
-            eprintln!("{message}");
-            return ExitCode::from(2);
-        }
-        Err(UsageError { message, help }) => {
-            eprintln!("{message}\n\n{help}");
-            return ExitCode::from(2);
-        }
-    };
-    run(&args).unwrap_or_else(|message| {
-        eprintln!("gh-codeowners: {message}");
+    let matches = Cli::command().bin_name(program_name()).get_matches();
+    let cli = Cli::from_arg_matches(&matches).unwrap_or_else(|error| error.exit());
+    run(&cli).unwrap_or_else(|message| {
+        eprintln!("{}: {message}", program_name());
         ExitCode::from(2)
     })
 }

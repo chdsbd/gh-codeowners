@@ -380,30 +380,26 @@ fn rejects_arguments_a_command_doesnt_take() {
 }
 
 #[test]
-fn points_old_flags_to_their_commands() {
-    let repo = repo("old-flags");
-    for (flag, command) in [
-        ("--owner-of", "gh codeowners view <path>"),
-        ("--errors", "gh codeowners check"),
-        ("--check", "gh codeowners check"),
-    ] {
-        let (status, _, stderr) = run(&repo, &[flag]);
-        assert_eq!(status, 2);
-        assert!(
-            stderr.starts_with(&format!("Unknown option '{flag}', use `{command}`\n")),
-            "{stderr}"
-        );
-    }
+fn prints_help_without_a_command() {
+    let (status, _, stderr) = run(&repo("help"), &[]);
+    assert_eq!(status, 2);
+    assert!(
+        stderr.starts_with("Work with GitHub CODEOWNERS files\n\nUsage: gh-codeowners "),
+        "{stderr}"
+    );
 }
 
 #[test]
-fn prints_help_without_a_command() {
-    let (status, stdout, _) = run(&repo("help"), &[]);
-    assert_eq!(status, 0);
-    assert!(
-        stdout.starts_with("Work with GitHub CODEOWNERS files.\n\nUSAGE\n"),
-        "{stdout}"
-    );
+fn calls_itself_gh_codeowners_as_a_gh_extension() {
+    let repo = repo("extension");
+    let output = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
+        .args(["view"])
+        .env("GH_EXTENSION", "1")
+        .current_dir(&repo.0)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.contains("Usage: gh codeowners view"), "{stderr}");
 }
 
 fn run_in(dir: &Path, args: &[&str]) -> (i32, String, String) {
