@@ -15,4 +15,6 @@ git push origin v0.1.0
 
 `cargo test` checks the matcher against every file ownership recorded from GitHub in [`tests/github.txt`](tests/github.txt).
 
+The CLI tests in [`tests/cli.rs`](tests/cli.rs) compare output to inline [insta](https://insta.rs) snapshots. After changing output on purpose, update them with [`cargo insta review`](https://insta.rs/docs/cli/), and review the diff like code.
+
 [codeowners-comparison](https://github.com/chdsbd/codeowners-comparison) runs other CODEOWNERS libraries on the same cases.
