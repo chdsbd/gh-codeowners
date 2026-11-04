@@ -98,6 +98,14 @@ pub(crate) fn ignored_warning(loaded: &Loaded, subject: &str) -> Option<String> 
     ))
 }
 
+/// Warn that GitHub ignores another CODEOWNERS file's rules. On stderr, so it
+/// doesn't mix with output meant for other programs.
+pub(crate) fn warn_if_ignored(loaded: &Loaded) {
+    if let Some(message) = ignored_warning(loaded, &display_path(loaded)) {
+        eprintln!("{}: warning: {message}", crate::program_name());
+    }
+}
+
 pub(crate) fn too_big(loaded: &Loaded) -> bool {
     loaded.text.len() as u64 > MAX_CODEOWNERS_BYTES
 }

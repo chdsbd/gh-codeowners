@@ -9,7 +9,7 @@ use gh_codeowners::count_tracked_files;
 use gh_codeowners::report::{Status, rule_json, to_json};
 
 use super::check::problem_lines;
-use super::load::{Loaded, check_size, display_path, print_stdout, rule_list};
+use super::load::{Loaded, check_size, display_path, print_stdout, rule_list, warn_if_ignored};
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -22,6 +22,7 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn run(loaded: &Loaded, args: &Args, json: bool) -> Result<ExitCode, String> {
+    warn_if_ignored(loaded);
     let stats = stats_for(loaded, args.threads)?;
     let rules: Vec<&RuleStats> = stats
         .rules

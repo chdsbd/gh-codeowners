@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
-use cli::load::{display_path, ignored_warning, load};
+use cli::load::load;
 use cli::{check, list, view};
 
 mod cli;
@@ -27,7 +27,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Check CODEOWNERS for lines GitHub rejects
+    /// Check CODEOWNERS for problems
     ///
     /// Warns about lines that are misleading. Exits with 1 if CODEOWNERS has errors,
     /// and 2 if the command fails.
@@ -40,19 +40,11 @@ enum Command {
     /// Show the rule that owns each path
     ///
     /// Output matches GitHub's code owners icon tooltip.
-    /// Paths don't need to be tracked by git.
     View(view::Args),
 }
 
 fn run(cli: &Cli) -> Result<ExitCode, String> {
     let loaded = load(cli)?;
-    // On stderr, so it doesn't mix with output meant for other programs.
-    // `check` reports it as a problem instead.
-    if !matches!(cli.command, Command::Check(_))
-        && let Some(message) = ignored_warning(&loaded, &display_path(&loaded))
-    {
-        eprintln!("{}: warning: {message}", program_name());
-    }
     match &cli.command {
         Command::Check(args) => check::run(&loaded, args, cli.json),
         Command::List(args) => list::run(&loaded, args, cli.json),
