@@ -32,7 +32,6 @@ pub(crate) fn run(loaded: &Loaded, args: &Args, json: bool) -> Result<ExitCode, 
     Ok(ExitCode::SUCCESS)
 }
 
-/// Each problem on its own line, prefixed with the file and line number.
 pub(crate) fn problem_lines(display: &str, problems: &[LineProblem]) -> String {
     let severity = |p: &LineProblem| if p.error { "error" } else { "warning" };
     let lines: Vec<String> = problems
@@ -45,8 +44,6 @@ pub(crate) fn problem_lines(display: &str, problems: &[LineProblem]) -> String {
     lines.join("\n")
 }
 
-/// Everything `check` reports: the lines GitHub rejects or that likely don't
-/// do what they look like, and with --unused, rules that own no files.
 fn check_problems(
     loaded: &Loaded,
     unused: bool,
@@ -60,11 +57,13 @@ fn check_problems(
             message,
         });
     }
-    // A file too big for GitHub already has an error, and nothing to count.
-    if unused && !too_big(loaded) {
+    if unused && 
+    // oversized files are reported via find_problems.
+    // We don't bother counting if the file is too large.
+    !too_big(loaded) {
         let stats = stats_for(loaded, threads)?;
         for r in stats.rules.iter().filter(|r| r.status != Status::Active) {
-            // A line already reported likely explains why it owns nothing.
+            // Don't warn about a line being unowned when there's already a problem with it.
             if problems.iter().any(|p| p.lineno == Some(r.rule.lineno)) {
                 continue;
             }
