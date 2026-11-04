@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
-use cli::load::{display_path, ignored_warning, load};
+use cli::load::load;
 use cli::{check, list, view};
 
 mod cli;
@@ -46,13 +46,6 @@ enum Command {
 
 fn run(cli: &Cli) -> Result<ExitCode, String> {
     let loaded = load(cli)?;
-    // On stderr, so it doesn't mix with output meant for other programs.
-    // `check` reports it as a problem instead.
-    if !matches!(cli.command, Command::Check(_))
-        && let Some(message) = ignored_warning(&loaded, &display_path(&loaded))
-    {
-        eprintln!("{}: warning: {message}", program_name());
-    }
     match &cli.command {
         Command::Check(args) => check::run(&loaded, args, cli.json),
         Command::List(args) => list::run(&loaded, args, cli.json),

@@ -5,7 +5,9 @@ use gh_codeowners::codeowners::{CodeownersRule, parse_codeowners};
 use gh_codeowners::owners_of;
 use gh_codeowners::report::{ownership_json, to_json};
 
-use super::load::{Loaded, absolute, check_size, display_path, print_stdout, rule_list};
+use super::load::{
+    Loaded, absolute, check_size, display_path, print_stdout, rule_list, warn_if_ignored,
+};
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -14,6 +16,7 @@ pub(crate) struct Args {
 }
 
 pub(crate) fn run(loaded: &Loaded, args: &Args, json: bool) -> Result<ExitCode, String> {
+    warn_if_ignored(loaded);
     let files = ownership(loaded, &args.paths)?;
     print_stdout(&if json {
         to_json(
