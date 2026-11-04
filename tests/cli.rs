@@ -437,6 +437,55 @@ fn owner_of_treats_directories_as_directories() {
     ");
 }
 
+/// A symlink to `repo`, for spelling its path another way.
+#[cfg(unix)]
+fn symlink_to(repo: &Repo) -> Repo {
+    let link = repo.0.with_extension("link");
+    let _ = std::fs::remove_file(&link);
+    std::os::unix::fs::symlink(&repo.0, &link).unwrap();
+    Repo(link)
+}
+
+#[cfg(unix)]
+#[test]
+fn view_accepts_a_root_or_path_spelled_through_a_symlink() {
+    let repo = repo("view-root-symlink");
+    let link = symlink_to(&repo);
+    let through_link = link.0.join("src/main.ts");
+    for args in [
+        vec!["view", "--root", link.0.to_str().unwrap(), "src/main.ts"],
+        vec!["view", through_link.to_str().unwrap()],
+    ] {
+        let (status, stdout, stderr) = run(&repo, &args);
+        assert_eq!((status, stderr.as_str()), (0, ""));
+        assert_eq!(
+            stdout,
+            "src/main.ts: @acme/platform, from .github/CODEOWNERS:1 *\n"
+        );
+    }
+}
+
+#[cfg(unix)]
+#[test]
+fn view_keeps_symlinks_inside_the_repository_as_written() {
+    let repo = repo("view-inner-symlink");
+    std::os::unix::fs::symlink("src", repo.0.join("link")).unwrap();
+    let link = symlink_to(&repo);
+    // Git tracks a symlink as a file, so its path is the repository path,
+    // however the root is spelled.
+    for args in [
+        vec!["view", "link/main.ts"],
+        vec!["view", "--root", link.0.to_str().unwrap(), "link/main.ts"],
+    ] {
+        let (status, stdout, stderr) = run(&repo, &args);
+        assert_eq!((status, stderr.as_str()), (0, ""));
+        assert_eq!(
+            stdout,
+            "link/main.ts: @acme/platform, from .github/CODEOWNERS:1 *\n"
+        );
+    }
+}
+
 #[test]
 fn warns_when_github_ignores_rules_for_an_empty_codeowners() {
     let repo = repo("ignored");

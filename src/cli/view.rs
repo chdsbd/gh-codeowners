@@ -33,14 +33,16 @@ pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<Exit
 
 fn repo_path(root: &Path, path: &str) -> Result<String, String> {
     let given = normalize(&absolute(Path::new(path)));
-    let relative = match given.strip_prefix(normalize(&absolute(root))) {
-        Ok(relative) => relative.to_path_buf(),
-        // One of the paths may go through a symlink, like /var on macOS.
-        Err(_) => real_path(&given)
-            .zip(std::fs::canonicalize(root).ok())
-            .and_then(|(given, root)| given.strip_prefix(root).ok().map(Path::to_path_buf))
-            .ok_or_else(|| format!("{path} isn't in {}", root.display()))?,
-    };
+    let outside = || format!("{path} isn't in {}", root.display());
+    // Either may be spelled through a symlink, like /var on macOS, so find the
+    // root by where it resolves to. The rest stays as written, since git tracks
+    // a symlink as a file, and it needn't exist.
+    let real_root = std::fs::canonicalize(root).map_err(|_| outside())?;
+    let entry = given
+        .ancestors()
+        .find(|ancestor| std::fs::canonicalize(ancestor).is_ok_and(|real| real == real_root))
+        .ok_or_else(outside)?;
+    let relative = given.strip_prefix(entry).expect("an ancestor");
     let mut relative = relative.to_string_lossy().into_owned();
     if cfg!(windows) {
         relative = relative.replace('\\', "/");
@@ -64,12 +66,6 @@ fn normalize(path: &Path) -> PathBuf {
         }
     }
     normal
-}
-
-fn real_path(path: &Path) -> Option<PathBuf> {
-    std::fs::canonicalize(path)
-        .ok()
-        .or_else(|| Some(real_path(path.parent()?)?.join(path.file_name()?)))
 }
 
 /// Each path to view, and the rule that owns it.
