@@ -5,7 +5,7 @@ use gh_codeowners::codeowners::{LineProblem, find_problems};
 use gh_codeowners::report::{Status, problem_json, to_json};
 
 use super::list::stats_for;
-use super::load::{Loaded, display_path, ignored_file_warning, print_stdout, too_big};
+use super::load::{CodeownersFile, display_path, ignored_file_warning, print_stdout, too_big};
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -17,14 +17,14 @@ pub(crate) struct Args {
     threads: Option<NonZeroUsize>,
 }
 
-pub(crate) fn run(loaded: &Loaded, args: &Args, json: bool) -> Result<ExitCode, String> {
-    let problems = check_problems(loaded, args.unused, args.threads)?;
+pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<ExitCode, String> {
+    let problems = check_problems(file, args.unused, args.threads)?;
     print_stdout(&if json {
         to_json(&problems.iter().map(problem_json).collect::<Vec<_>>())
     } else if problems.is_empty() {
-        format!("{}: no problems", display_path(loaded))
+        format!("{}: no problems", display_path(file))
     } else {
-        problem_lines(&display_path(loaded), &problems)
+        problem_lines(&display_path(file), &problems)
     })?;
     if problems.iter().any(|p| p.error) {
         return Ok(ExitCode::from(1));
@@ -32,7 +32,6 @@ pub(crate) fn run(loaded: &Loaded, args: &Args, json: bool) -> Result<ExitCode, 
     Ok(ExitCode::SUCCESS)
 }
 
-/// Each problem on its own line, prefixed with the file and line number.
 pub(crate) fn problem_lines(display: &str, problems: &[LineProblem]) -> String {
     let severity = |p: &LineProblem| if p.error { "error" } else { "warning" };
     let lines: Vec<String> = problems
@@ -45,26 +44,25 @@ pub(crate) fn problem_lines(display: &str, problems: &[LineProblem]) -> String {
     lines.join("\n")
 }
 
-/// Everything `check` reports: the lines GitHub rejects or that likely don't
-/// do what they look like, and with --unused, rules that own no files.
 fn check_problems(
-    loaded: &Loaded,
+    file: &CodeownersFile,
     unused: bool,
     threads: Option<NonZeroUsize>,
 ) -> Result<Vec<LineProblem>, String> {
-    let mut problems = find_problems(&loaded.text);
-    if let Some(message) = ignored_file_warning(loaded, "this file") {
+    let mut problems = find_problems(&file.text);
+    if let Some(message) = ignored_file_warning(file, "this file") {
         problems.push(LineProblem {
             lineno: None,
             error: false,
             message,
         });
     }
-    // A file too big for GitHub already has an error, and nothing to count.
-    if unused && !too_big(loaded) {
-        let stats = stats_for(loaded, threads)?;
+    // oversized files are reported via find_problems.
+    // We don't bother counting if the file is too large.
+    if unused && !too_big(file) {
+        let stats = stats_for(file, threads)?;
         for r in stats.rules.iter().filter(|r| r.status != Status::Active) {
-            // A line already reported likely explains why it owns nothing.
+            // Don't warn about a line being unowned when there's already a problem with it.
             if problems.iter().any(|p| p.lineno == Some(r.rule.lineno)) {
                 continue;
             }

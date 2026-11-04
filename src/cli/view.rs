@@ -6,7 +6,7 @@ use gh_codeowners::owners_of;
 use gh_codeowners::report::{ownership_json, to_json};
 
 use super::load::{
-    Loaded, absolute, check_size, display_path, print_stdout, rule_list, warn_if_ignored,
+    CodeownersFile, absolute, check_size, display_path, print_stdout, rule_list, warn_if_ignored,
 };
 
 #[derive(clap::Args)]
@@ -15,9 +15,9 @@ pub(crate) struct Args {
     paths: Vec<String>,
 }
 
-pub(crate) fn run(loaded: &Loaded, args: &Args, json: bool) -> Result<ExitCode, String> {
-    warn_if_ignored(loaded);
-    let files = ownership(loaded, &args.paths)?;
+pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<ExitCode, String> {
+    warn_if_ignored(file);
+    let files = ownership(file, &args.paths)?;
     print_stdout(&if json {
         to_json(
             &files
@@ -26,7 +26,7 @@ pub(crate) fn run(loaded: &Loaded, args: &Args, json: bool) -> Result<ExitCode, 
                 .collect::<Vec<_>>(),
         )
     } else {
-        format_ownership(loaded, &files)
+        format_ownership(file, &files)
     })?;
     Ok(ExitCode::SUCCESS)
 }
@@ -74,14 +74,14 @@ fn real_path(path: &Path) -> Option<PathBuf> {
 
 /// Each path to view, and the rule that owns it.
 fn ownership(
-    loaded: &Loaded,
+    file: &CodeownersFile,
     paths: &[String],
 ) -> Result<Vec<(String, Option<CodeownersRule>)>, String> {
-    check_size(loaded)?;
-    let rules = parse_codeowners(&loaded.text);
+    check_size(file)?;
+    let rules = parse_codeowners(&file.text);
     let paths = paths
         .iter()
-        .map(|path| repo_path(&loaded.root, path))
+        .map(|path| repo_path(&file.root, path))
         .collect::<Result<Vec<_>, _>>()?;
     let owners = owners_of(&rule_list(&rules), &paths);
     Ok(paths
@@ -91,8 +91,8 @@ fn ownership(
         .collect())
 }
 
-fn format_ownership(loaded: &Loaded, files: &[(String, Option<CodeownersRule>)]) -> String {
-    let display = display_path(loaded);
+fn format_ownership(file: &CodeownersFile, files: &[(String, Option<CodeownersRule>)]) -> String {
+    let display = display_path(file);
     let lines: Vec<String> = files
         .iter()
         .map(|(path, rule)| match rule {
