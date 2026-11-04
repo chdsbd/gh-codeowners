@@ -418,47 +418,31 @@ impl<'a> Counter<'a> {
 
 // Files per unit of work. Small enough to balance threads, big enough that
 // re-entering a chunk's ancestor directories costs nothing.
-pub const CHUNK: usize = 16 * 1024;
+const CHUNK: usize = 16 * 1024;
 
 /// Count the files each rule owns, on `threads` threads. Files should be
 /// grouped by directory, as git's index lists them; any order is correct,
 /// but out-of-order files redo their directories' work.
 pub fn count<P: AsRef<[u8]> + Sync>(rules: &Rules, files: &[P], threads: usize) -> Counts {
     let next = AtomicUsize::new(0);
-    count_with(rules, threads, |add| {
-        let start = next.fetch_add(CHUNK, Ordering::Relaxed);
-        if start >= files.len() {
-            return false;
+    let tally = || {
+        let mut counter = Counter::new(rules);
+        loop {
+            let start = next.fetch_add(CHUNK, Ordering::Relaxed);
+            if start >= files.len() {
+                return counter.into_tally();
+            }
+            for file in &files[start..(start + CHUNK).min(files.len())] {
+                counter.add(file.as_ref());
+            }
         }
-        for file in &files[start..(start + CHUNK).min(files.len())] {
-            add(file.as_ref());
-        }
-        true
-    })
-}
-
-/// Count files on `threads` threads. Each thread calls `work` until it
-/// returns false; `work` passes the next files to count to `add`.
-pub fn count_with<W>(rules: &Rules, threads: usize, work: W) -> Counts
-where
-    W: Fn(&mut dyn FnMut(&[u8])) -> bool + Sync,
-{
+    };
     // Without spawning, which WebAssembly can't.
     if threads <= 1 {
-        let mut counter = Counter::new(rules);
-        while work(&mut |file| counter.add(file)) {}
-        return merge(rules, vec![counter.into_tally()]);
+        return merge(rules, [tally()]);
     }
     let tallies: Vec<Tally> = std::thread::scope(|scope| {
-        let workers: Vec<_> = (0..threads.max(1))
-            .map(|_| {
-                scope.spawn(|| {
-                    let mut counter = Counter::new(rules);
-                    while work(&mut |file| counter.add(file)) {}
-                    counter.into_tally()
-                })
-            })
-            .collect();
+        let workers: Vec<_> = (0..threads).map(|_| scope.spawn(tally)).collect();
         workers.into_iter().map(|w| w.join().unwrap()).collect()
     });
     merge(rules, tallies)

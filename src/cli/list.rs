@@ -67,8 +67,7 @@ pub(crate) fn stats_for(
     let threads = threads
         .or_else(|| std::thread::available_parallelism().ok())
         .map_or(1, NonZeroUsize::get);
-    let counts =
-        count_tracked_files(&file.root, &rule_list(&rules), threads).map_err(|e| e.to_string())?;
+    let counts = count_tracked_files(&file.root, &rule_list(&rules), threads)?;
     Ok(Stats {
         display_path: display_path(file),
         files: counts.files,

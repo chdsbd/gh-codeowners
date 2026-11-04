@@ -4,74 +4,35 @@
 
 pub mod codeowners;
 pub mod counter;
-pub mod index;
 pub mod pattern;
 pub mod report;
 
 use std::path::Path;
-use std::sync::{Mutex, mpsc};
+use std::process::Command;
 
-use counter::{CHUNK, Counts, Rule, Rules, count, count_with};
-use index::{Error, Index, ls_files};
+use counter::{Counts, Rule, Rules, count};
 
 /// Count the files in `root`'s git index that each rule owns, on `threads`
 /// threads.
-///
-/// Reading the index and counting overlap: threads parse the index into
-/// batches, and others count batches as they arrive. Indexes the reader
-/// can't handle, like split and sparse indexes, are listed with
-/// `git ls-files` instead.
-pub fn count_tracked_files(root: &Path, rules: &[Rule], threads: usize) -> Result<Counts, Error> {
-    let threads = threads.max(1);
-    let index = match Index::open(root) {
-        Ok(index) => index,
-        Err(Error::Unsupported(_)) => return count_ls_files(root, &Rules::new(rules), threads),
-        Err(error) => return Err(error),
-    };
-    let compiled = Rules::new(rules);
-    let counted = match count_index(&index, &compiled, threads, true) {
-        // A guess in the parallel parse was wrong, so parse sequentially.
-        Ok(None) => count_index(&index, &compiled, threads, false),
-        result => result,
-    };
-    match counted {
-        // Sequential parses are never rejected.
-        Ok(counts) => Ok(counts.expect("sequential parse")),
-        // Parsing may have stopped partway through, so start over.
-        Err(Error::Unsupported(_)) => count_ls_files(root, &compiled, threads),
-        Err(error) => Err(error),
+pub fn count_tracked_files(root: &Path, rules: &[Rule], threads: usize) -> Result<Counts, String> {
+    let output = Command::new("git")
+        .args(["ls-files", "-z", "--cached"])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("Couldn't run git: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git ls-files exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
     }
-}
-
-// Count while parsing, returning None if a parallel parse failed its checks.
-fn count_index(
-    index: &Index,
-    rules: &Rules,
-    threads: usize,
-    parallel: bool,
-) -> Result<Option<Counts>, Error> {
-    let (sender, receiver) = mpsc::channel();
-    let receiver = Mutex::new(receiver);
-    let (counts, parsed) = std::thread::scope(|scope| {
-        let parsing = scope.spawn(move || {
-            // Dropping `sender` at the end tells counting threads to stop.
-            let send = |batch| sender.send(batch).unwrap();
-            if parallel {
-                index.for_each_batch_parallel(threads, CHUNK, send)
-            } else {
-                index.for_each_batch(CHUNK, send).map(|()| true)
-            }
-        });
-        let counts = count_with(rules, threads, |add| {
-            let Ok(batch) = receiver.lock().unwrap().recv() else {
-                return false;
-            };
-            batch.paths(Some(index)).for_each(add);
-            true
-        });
-        (counts, parsing.join().unwrap())
-    });
-    Ok(parsed?.then_some(counts))
+    let mut paths: Vec<&[u8]> = output.stdout.split(|&b| b == 0).collect();
+    // Every path ends in a NUL, which leaves an empty one at the end.
+    paths.pop();
+    // Conflicted files are listed once per stage.
+    paths.dedup();
+    Ok(count(&Rules::new(rules), &paths, threads))
 }
 
 /// For each path, the index in `rules` of the rule that owns it: the last
@@ -100,10 +61,4 @@ pub fn owners_of<P: AsRef<[u8]>>(rules: &[Rule], paths: &[P]) -> Vec<Option<usiz
                 .rposition(|m| candidates.iter().any(|c| m.is_match(c)))
         })
         .collect()
-}
-
-fn count_ls_files(root: &Path, rules: &Rules, threads: usize) -> Result<Counts, Error> {
-    let batch = ls_files(root)?;
-    let paths: Vec<&[u8]> = batch.paths(None).collect();
-    Ok(count(rules, &paths, threads))
 }

@@ -2,7 +2,6 @@
 // cargo run --release --example bench_count <root> <rounds> [threads]
 use gh_codeowners::codeowners::parse_codeowners;
 use gh_codeowners::counter::{Rule, Rules, count};
-use gh_codeowners::index::Index;
 use std::time::Instant;
 
 fn main() {
@@ -18,12 +17,13 @@ fn main() {
             lineno: r.lineno,
         })
         .collect();
-    let index = Index::open(&root).unwrap();
-    let mut batches = Vec::new();
-    index
-        .for_each_batch(16 * 1024, |b| batches.push(b))
+    let output = std::process::Command::new("git")
+        .args(["ls-files", "-z"])
+        .current_dir(&root)
+        .output()
         .unwrap();
-    let paths: Vec<&[u8]> = batches.iter().flat_map(|b| b.paths(Some(&index))).collect();
+    let mut paths: Vec<&[u8]> = output.stdout.split(|&b| b == 0).collect();
+    paths.pop();
     let compiled = Rules::new(&rules);
     for _ in 0..rounds {
         let t = Instant::now();
