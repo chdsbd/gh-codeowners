@@ -57,7 +57,7 @@ fn count_everything(dir: &Path) -> Result<usize, String> {
         pattern: "*".into(),
         lineno: 0,
     }];
-    count_tracked_files(dir, &rules, 2).map(|counts| counts.files)
+    count_tracked_files(dir, &rules).map(|counts| counts.files)
 }
 
 #[test]

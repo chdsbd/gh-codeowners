@@ -1,5 +1,4 @@
 use std::fmt::Write as _;
-use std::num::NonZeroUsize;
 use std::process::ExitCode;
 
 use comfy_table::presets::NOTHING;
@@ -18,14 +17,11 @@ pub(crate) struct Args {
     /// Only list rules that own no files
     #[arg(long)]
     unused: bool,
-    /// Threads to count with (default: one per CPU)
-    #[arg(short = 'j', long, value_name = "n")]
-    threads: Option<NonZeroUsize>,
 }
 
 pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<ExitCode, String> {
     warn_if_ignored(file);
-    let stats = stats_for(file, args.threads)?;
+    let stats = stats_for(file)?;
     let rules: Vec<&RuleStats> = stats
         .rules
         .iter()
@@ -58,16 +54,10 @@ pub(crate) struct Stats {
     pub(crate) problems: Vec<LineProblem>,
 }
 
-pub(crate) fn stats_for(
-    file: &CodeownersFile,
-    threads: Option<NonZeroUsize>,
-) -> Result<Stats, String> {
+pub(crate) fn stats_for(file: &CodeownersFile) -> Result<Stats, String> {
     check_size(file)?;
     let rules = parse_codeowners(&file.text);
-    let threads = threads
-        .or_else(|| std::thread::available_parallelism().ok())
-        .map_or(1, NonZeroUsize::get);
-    let counts = count_tracked_files(&file.root, &rule_list(&rules), threads)?;
+    let counts = count_tracked_files(&file.root, &rule_list(&rules))?;
     Ok(Stats {
         display_path: display_path(file),
         files: counts.files,

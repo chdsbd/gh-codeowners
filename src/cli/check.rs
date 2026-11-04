@@ -1,4 +1,3 @@
-use std::num::NonZeroUsize;
 use std::process::ExitCode;
 
 use gh_codeowners::codeowners::{LineProblem, find_problems};
@@ -12,13 +11,10 @@ pub(crate) struct Args {
     /// Report rules that own no files as errors too
     #[arg(long)]
     unused: bool,
-    /// Threads to count with, for --unused (default: one per CPU)
-    #[arg(short = 'j', long, value_name = "n")]
-    threads: Option<NonZeroUsize>,
 }
 
 pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<ExitCode, String> {
-    let problems = check_problems(file, args.unused, args.threads)?;
+    let problems = check_problems(file, args.unused)?;
     print_stdout(&if json {
         to_json(&problems.iter().map(problem_json).collect::<Vec<_>>())
     } else if problems.is_empty() {
@@ -44,11 +40,7 @@ pub(crate) fn problem_lines(display: &str, problems: &[LineProblem]) -> String {
     lines.join("\n")
 }
 
-fn check_problems(
-    file: &CodeownersFile,
-    unused: bool,
-    threads: Option<NonZeroUsize>,
-) -> Result<Vec<LineProblem>, String> {
+fn check_problems(file: &CodeownersFile, unused: bool) -> Result<Vec<LineProblem>, String> {
     let mut problems = find_problems(&file.text);
     if let Some(message) = ignored_file_warning(file, "this file") {
         problems.push(LineProblem {
@@ -60,7 +52,7 @@ fn check_problems(
     // oversized files are reported via find_problems.
     // We don't bother counting if the file is too large.
     if unused && !too_big(file) {
-        let stats = stats_for(file, threads)?;
+        let stats = stats_for(file)?;
         for r in stats.rules.iter().filter(|r| r.status != Status::Active) {
             // Don't warn about a line being unowned when there's already a problem with it.
             if problems.iter().any(|p| p.lineno == Some(r.rule.lineno)) {
