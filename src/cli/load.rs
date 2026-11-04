@@ -13,9 +13,9 @@ pub(crate) fn absolute(path: &Path) -> PathBuf {
     std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf())
 }
 
-pub(crate) struct Loaded {
+pub(crate) struct CodeownersFile {
     // "-" for stdin.
-    pub(crate) codeowners: PathBuf,
+    pub(crate) path: PathBuf,
     pub(crate) root: PathBuf,
     pub(crate) text: String,
     // A CODEOWNERS file GitHub ignores, because the one it uses has no rules.
@@ -26,7 +26,7 @@ fn is_stdin(path: &Path) -> bool {
     path == Path::new("-")
 }
 
-pub(crate) fn load(cli: &Cli) -> Result<Loaded, String> {
+pub(crate) fn load(cli: &Cli) -> Result<CodeownersFile, String> {
     // The repository containing the current directory, or else the directory.
     let current_root = || {
         let current_dir = std::env::current_dir().unwrap_or_default();
@@ -60,8 +60,8 @@ pub(crate) fn load(cli: &Cli) -> Result<Loaded, String> {
         Some(_) => None,
         None => ignored_codeowners(&root, &text),
     };
-    Ok(Loaded {
-        codeowners,
+    Ok(CodeownersFile {
+        path: codeowners,
         root,
         text,
         ignored,
@@ -69,11 +69,11 @@ pub(crate) fn load(cli: &Cli) -> Result<Loaded, String> {
 }
 
 /// The CODEOWNERS file's path relative to the root, for messages.
-pub(crate) fn display_path(loaded: &Loaded) -> String {
-    if is_stdin(&loaded.codeowners) {
+pub(crate) fn display_path(file: &CodeownersFile) -> String {
+    if is_stdin(&file.path) {
         return "<stdin>".to_string();
     }
-    repo_display(&loaded.root, &loaded.codeowners)
+    repo_display(&file.root, &file.path)
 }
 
 /// `path` relative to `root`, for messages. Inside the repository, it's a
@@ -90,9 +90,9 @@ fn repo_display(root: &Path, path: &Path) -> String {
     }
 }
 
-pub(crate) fn ignored_file_warning(loaded: &Loaded, subject: &str) -> Option<String> {
-    let ignored = loaded.ignored.as_ref()?;
-    let ignored = repo_display(&loaded.root, ignored);
+pub(crate) fn ignored_file_warning(file: &CodeownersFile, subject: &str) -> Option<String> {
+    let ignored = file.ignored.as_ref()?;
+    let ignored = repo_display(&file.root, ignored);
     Some(format!(
         "{subject} has no rules, but GitHub uses it instead of {ignored}, so no file has an owner"
     ))
@@ -100,22 +100,22 @@ pub(crate) fn ignored_file_warning(loaded: &Loaded, subject: &str) -> Option<Str
 
 /// Warn that GitHub ignores another CODEOWNERS file's rules. On stderr, so it
 /// doesn't mix with output meant for other programs.
-pub(crate) fn warn_if_ignored(loaded: &Loaded) {
-    if let Some(message) = ignored_file_warning(loaded, &display_path(loaded)) {
+pub(crate) fn warn_if_ignored(file: &CodeownersFile) {
+    if let Some(message) = ignored_file_warning(file, &display_path(file)) {
         eprintln!("{}: warning: {message}", crate::program_name());
     }
 }
 
-pub(crate) fn too_big(loaded: &Loaded) -> bool {
-    loaded.text.len() as u64 > MAX_CODEOWNERS_BYTES
+pub(crate) fn too_big(file: &CodeownersFile) -> bool {
+    file.text.len() as u64 > MAX_CODEOWNERS_BYTES
 }
 
-pub(crate) fn check_size(loaded: &Loaded) -> Result<(), String> {
-    if too_big(loaded) {
+pub(crate) fn check_size(file: &CodeownersFile) -> Result<(), String> {
+    if too_big(file) {
         return Err(format!(
             "{} is {} bytes, over GitHub's limit of {MAX_CODEOWNERS_BYTES}, so GitHub ignores it",
-            display_path(loaded),
-            loaded.text.len()
+            display_path(file),
+            file.text.len()
         ));
     }
     Ok(())

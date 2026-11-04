@@ -44,11 +44,11 @@ enum Command {
 }
 
 fn run(cli: &Cli) -> Result<ExitCode, String> {
-    let loaded = load(cli)?;
+    let file = load(cli)?;
     match &cli.command {
-        Command::Check(args) => check::run(&loaded, args, cli.json),
-        Command::List(args) => list::run(&loaded, args, cli.json),
-        Command::View(args) => view::run(&loaded, args, cli.json),
+        Command::Check(args) => check::run(&file, args, cli.json),
+        Command::List(args) => list::run(&file, args, cli.json),
+        Command::View(args) => view::run(&file, args, cli.json),
     }
 }
 
