@@ -2,14 +2,10 @@
 //! is computed once and shared by its files, and rules are indexed by literal
 //! prefix or extension so each path is only tested against rules that could
 //! match it.
-//!
-//! Counting splits the files across threads. Each thread keeps its own
-//! directory stack, so any split gives the same counts.
 
 use rustc_hash::FxHashMap as HashMap;
 use std::rc::Rc;
 use std::sync::LazyLock;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use regex::bytes::Regex;
 
@@ -192,7 +188,7 @@ impl RuleIndex {
     }
 }
 
-/// Compiled rules, shared by every counting thread.
+/// Compiled rules.
 pub struct Rules {
     linenos: Vec<usize>,
     rules: Vec<CompiledRule>,
@@ -226,7 +222,7 @@ struct DirFrame<'a> {
     any_file_candidates: List,
 }
 
-/// Counts files on one thread.
+/// Counts files.
 struct Counter<'a> {
     rules: &'a Rules,
     owned: Vec<usize>,
@@ -416,85 +412,28 @@ impl<'a> Counter<'a> {
     }
 }
 
-// Files per unit of work. Small enough to balance threads, big enough that
-// re-entering a chunk's ancestor directories costs nothing.
-const CHUNK: usize = 16 * 1024;
-
-/// Count the files each rule owns, on `threads` threads. Files should be
-/// grouped by directory, as git's index lists them; any order is correct,
-/// but out-of-order files redo their directories' work.
-pub fn count<P: AsRef<[u8]> + Sync>(rules: &Rules, files: &[P], threads: usize) -> Counts {
-    let next = AtomicUsize::new(0);
-    let tally = || {
-        let mut counter = Counter::new(rules);
-        loop {
-            let start = next.fetch_add(CHUNK, Ordering::Relaxed);
-            if start >= files.len() {
-                return counter.into_tally();
-            }
-            for file in &files[start..(start + CHUNK).min(files.len())] {
-                counter.add(file.as_ref());
-            }
-        }
-    };
-    // Without spawning, which WebAssembly can't.
-    if threads <= 1 {
-        return merge(rules, [tally()]);
+/// Count the files each rule owns. Files should be grouped by directory, as
+/// git's index lists them; any order is correct, but out-of-order files redo
+/// their directories' work.
+pub fn count<P: AsRef<[u8]>>(rules: &Rules, files: &[P]) -> Counts {
+    let mut counter = Counter::new(rules);
+    for file in files {
+        counter.add(file.as_ref());
     }
-    let tallies: Vec<Tally> = std::thread::scope(|scope| {
-        let workers: Vec<_> = (0..threads).map(|_| scope.spawn(tally)).collect();
-        workers.into_iter().map(|w| w.join().unwrap()).collect()
-    });
-    merge(rules, tallies)
-}
-
-// One thread's counts, without its directory stack, which can't leave the
-// thread.
-struct Tally {
-    owned: Vec<usize>,
-    matched: Vec<bool>,
-    files: usize,
-    unowned: usize,
-}
-
-impl Counter<'_> {
-    fn into_tally(self) -> Tally {
-        Tally {
-            owned: self.owned,
-            matched: self.matched,
-            files: self.files,
-            unowned: self.unowned,
-        }
-    }
-}
-
-// Combine counts from each thread.
-fn merge(rules: &Rules, tallies: impl IntoIterator<Item = Tally>) -> Counts {
-    let mut counts = Counts {
+    Counts {
+        files: counter.files,
+        unowned: counter.unowned,
         rules: rules
             .linenos
             .iter()
-            .map(|&lineno| RuleCount {
+            .zip(counter.owned.iter().zip(&counter.matched))
+            .map(|(&lineno, (&owned, &matched))| RuleCount {
                 lineno,
-                owned: 0,
-                matches_any: false,
+                owned,
+                matches_any: owned > 0 || matched,
             })
             .collect(),
-        ..Counts::default()
-    };
-    for counter in tallies {
-        counts.files += counter.files;
-        counts.unowned += counter.unowned;
-        for (rule, (owned, matched)) in counts
-            .rules
-            .iter_mut()
-            .zip(counter.owned.iter().zip(&counter.matched))
-        {
-            rule.owned += owned;
-            rule.matches_any |= *owned > 0 || *matched;
-        }
     }
-    counts
 }
 
 #[cfg(test)]
@@ -532,19 +471,17 @@ mod tests {
             "web/new.css",
             "api/style.css",
         ];
-        for threads in [1, 4] {
-            assert_eq!(
-                owned(&count(&r, &files, threads)),
-                [
-                    (2, true),
-                    (0, true),
-                    (1, true),
-                    (0, true),
-                    (0, false),
-                    (3, true)
-                ]
-            );
-        }
+        assert_eq!(
+            owned(&count(&r, &files)),
+            [
+                (2, true),
+                (0, true),
+                (1, true),
+                (0, true),
+                (0, false),
+                (3, true)
+            ]
+        );
     }
 
     #[test]
@@ -570,7 +507,7 @@ mod tests {
             "app/i/page.tsx",
         ];
         assert_eq!(
-            owned(&count(&r, &files, 1)),
+            owned(&count(&r, &files)),
             [
                 (1, true),
                 (1, true),

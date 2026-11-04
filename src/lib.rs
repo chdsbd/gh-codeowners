@@ -12,9 +12,8 @@ use std::process::Command;
 
 use counter::{Counts, Rule, Rules, count};
 
-/// Count the files in `root`'s git index that each rule owns, on `threads`
-/// threads.
-pub fn count_tracked_files(root: &Path, rules: &[Rule], threads: usize) -> Result<Counts, String> {
+/// Count the files in `root`'s git index that each rule owns.
+pub fn count_tracked_files(root: &Path, rules: &[Rule]) -> Result<Counts, String> {
     let output = Command::new("git")
         .args(["ls-files", "-z", "--cached"])
         .current_dir(root)
@@ -32,7 +31,7 @@ pub fn count_tracked_files(root: &Path, rules: &[Rule], threads: usize) -> Resul
     paths.pop();
     // Conflicted files are listed once per stage.
     paths.dedup();
-    Ok(count(&Rules::new(rules), &paths, threads))
+    Ok(count(&Rules::new(rules), &paths))
 }
 
 /// For each path, the index in `rules` of the rule that owns it: the last

@@ -106,18 +106,16 @@ fn agrees_with_testing_every_rule() {
             .collect();
         let rules = Rules::new(&rules);
         let expected = count_naively(&patterns, &files);
-        for threads in [1, 3] {
-            let counts = count(&rules, &files, threads);
-            let actual: Vec<(usize, bool)> = counts
-                .rules
-                .iter()
-                .map(|r| (r.owned, r.matches_any))
-                .collect();
-            assert_eq!(
-                actual, expected,
-                "seed {seed}, {threads} threads\npatterns: {patterns:?}\nfiles: {files:?}"
-            );
-        }
+        let counts = count(&rules, &files);
+        let actual: Vec<(usize, bool)> = counts
+            .rules
+            .iter()
+            .map(|r| (r.owned, r.matches_any))
+            .collect();
+        assert_eq!(
+            actual, expected,
+            "seed {seed}\npatterns: {patterns:?}\nfiles: {files:?}"
+        );
     }
 }
 
@@ -140,7 +138,7 @@ fn owners_of_agrees_with_counting() {
         let compiled = Rules::new(&rules);
         let owners = gh_codeowners::owners_of(&rules, &files);
         for (file, owner) in files.iter().zip(owners) {
-            let counted = count(&compiled, &[file], 1)
+            let counted = count(&compiled, &[file])
                 .rules
                 .iter()
                 .position(|rule| rule.owned == 1);

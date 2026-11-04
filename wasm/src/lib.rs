@@ -66,7 +66,7 @@ pub unsafe extern "C" fn count_files(
     let files = unsafe { bytes(files, files_len) };
     respond(rules(codeowners).map(|rules| {
         let files: Vec<&[u8]> = paths(files).collect();
-        let counts = count(&Rules::new(&rule_list(&rules)), &files, 1);
+        let counts = count(&Rules::new(&rule_list(&rules)), &files);
         to_json(&CountsJson {
             files: counts.files,
             unowned: counts.unowned,

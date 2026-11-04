@@ -15,7 +15,7 @@ fn rule_list(rules: &[CodeownersRule]) -> Vec<Rule> {
 
 fn owns(line: &str, path: &str) -> bool {
     let rules = rule_list(&parse_codeowners(line));
-    let counts = count(&Rules::new(&rules), &[path], 1);
+    let counts = count(&Rules::new(&rules), &[path]);
     let owned = counts.rules.iter().any(|r| r.owned == 1);
     // Finding a file's owner should agree with counting.
     assert_eq!(
@@ -104,7 +104,7 @@ fn picks_the_rule_github_picks() {
         let list = rule_list(&rules);
         let paths: Vec<&str> = recording.owners.iter().map(|(p, _)| p.as_str()).collect();
         let owners = gh_codeowners::owners_of(&list, &paths);
-        let counts = count(&Rules::new(&list), &paths, 1);
+        let counts = count(&Rules::new(&list), &paths);
         for ((path, expected), owner) in recording.owners.iter().zip(owners) {
             let actual = owner.map_or(0, |i| rules[i].lineno + 1);
             if actual != *expected {
