@@ -5,7 +5,7 @@ use gh_codeowners::codeowners::{LineProblem, find_problems};
 use gh_codeowners::report::{Status, problem_json, to_json};
 
 use super::list::stats_for;
-use super::load::{Loaded, display_path, ignored_warning, print_stdout, too_big};
+use super::load::{Loaded, display_path, ignored_file_warning, print_stdout, too_big};
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -53,7 +53,7 @@ fn check_problems(
     threads: Option<NonZeroUsize>,
 ) -> Result<Vec<LineProblem>, String> {
     let mut problems = find_problems(&loaded.text);
-    if let Some(message) = ignored_warning(loaded, "this file") {
+    if let Some(message) = ignored_file_warning(loaded, "this file") {
         problems.push(LineProblem {
             lineno: None,
             error: false,

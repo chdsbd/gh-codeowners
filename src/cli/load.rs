@@ -90,7 +90,7 @@ fn repo_display(root: &Path, path: &Path) -> String {
     }
 }
 
-pub(crate) fn ignored_warning(loaded: &Loaded, subject: &str) -> Option<String> {
+pub(crate) fn ignored_file_warning(loaded: &Loaded, subject: &str) -> Option<String> {
     let ignored = loaded.ignored.as_ref()?;
     let ignored = repo_display(&loaded.root, ignored);
     Some(format!(
@@ -101,7 +101,7 @@ pub(crate) fn ignored_warning(loaded: &Loaded, subject: &str) -> Option<String> 
 /// Warn that GitHub ignores another CODEOWNERS file's rules. On stderr, so it
 /// doesn't mix with output meant for other programs.
 pub(crate) fn warn_if_ignored(loaded: &Loaded) {
-    if let Some(message) = ignored_warning(loaded, &display_path(loaded)) {
+    if let Some(message) = ignored_file_warning(loaded, &display_path(loaded)) {
         eprintln!("{}: warning: {message}", crate::program_name());
     }
 }
