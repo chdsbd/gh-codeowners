@@ -27,7 +27,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Check CODEOWNERS for lines GitHub rejects
+    /// Check CODEOWNERS for problems
     ///
     /// Warns about lines that are misleading. Exits with 1 if CODEOWNERS has errors,
     /// and 2 if the command fails.
@@ -40,7 +40,6 @@ enum Command {
     /// Show the rule that owns each path
     ///
     /// Output matches GitHub's code owners icon tooltip.
-    /// Paths don't need to be tracked by git.
     View(view::Args),
 }
 

@@ -9,6 +9,7 @@ A CLI for [GitHub CODEOWNERS](https://docs.github.com/en/repositories/managing-y
 ## TODOs
 
 - [ ] `--online` flag for querying GitHub api to validate teams have write access to repository.
+- [ ] `--fs` support count files in disk instead of git index
 
 ## Install
 
