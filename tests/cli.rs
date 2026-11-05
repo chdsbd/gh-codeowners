@@ -262,8 +262,17 @@ fn errors_lists_problems_github_would_have() {
     );
     assert_eq!(status, 1);
     assert_snapshot!(stdout, @r"
-    <stdin>:2: error: `[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\`, like `\[x\]`
-    <stdin>:3: warning: `!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories
+    error: `[x]` isn't a valid pattern
+     --> <stdin>:2:1
+      |
+    2 | [x] @acme/x
+      | ^^^ both `[` and `]` must be escaped with a `\`, like `\[x\]`
+
+    warning: `!` doesn't negate a pattern on GitHub
+     --> <stdin>:3:1
+      |
+    3 | !foo @acme/foo
+      | ^^^^ this matches files named like the rest of the pattern, but not directories
     ");
     let (status, stdout, _) = run(&repo, &["check"]);
     assert_eq!(
@@ -288,8 +297,17 @@ fn counting_lists_problems_after_the_counts() {
        1      5  *
        2      0  [x]      no files match
 
-    <stdin>:2: error: `[x]` isn't a valid pattern - both `[` and `]` must be escaped with a `\`, like `\[x\]`
-    <stdin>:3: error: `not-an-owner` isn't a valid owner - owners must be @user, @org/team or an email address
+    error: `[x]` isn't a valid pattern
+     --> <stdin>:2:1
+      |
+    2 | [x] @acme/x
+      | ^^^ both `[` and `]` must be escaped with a `\`, like `\[x\]`
+
+    error: `not-an-owner` isn't a valid owner
+     --> <stdin>:3:6
+      |
+    3 | *.md not-an-owner
+      |      ^^^^^^^^^^^^ owners must be @user, @org/team or an email address
     ");
 }
 
@@ -335,9 +353,80 @@ fn check_unused_reports_rules_that_own_no_files() {
     let (status, stdout, _) = run(&repo("check-unused"), &["check", "--unused"]);
     assert_eq!(status, 1);
     assert_snapshot!(stdout, @r"
-    .github/CODEOWNERS:2: error: `/docs/` owns no files - every matching file is owned by a later rule
-    .github/CODEOWNERS:4: error: `/missing/` owns no files - no files match
+    error: `/docs/` owns no files
+     --> .github/CODEOWNERS:2:1
+      |
+    2 | /docs/      @acme/docs
+      | ^^^^^^ every matching file is owned by a later rule
+
+    error: `/missing/` owns no files
+     --> .github/CODEOWNERS:4:1
+      |
+    4 | /missing/   @acme/nobody
+      | ^^^^^^^^^ no files match
     ");
+}
+
+#[test]
+fn check_underlines_words_after_crlf_and_non_ascii_text() {
+    let (status, stdout, _) = run_with_stdin(
+        &repo("check-spans"),
+        &["check", "--codeowners", "-"],
+        "# 日本語\r\n文档\\ 目录 @acme/x 不是 # 注释\r\n\r\n/日本語/[x] @acme/y\r\n..",
+    );
+    assert_eq!(status, 1);
+    assert_snapshot!(stdout, @r"
+    error: `不是` isn't a valid owner
+     --> <stdin>:2:16
+      |
+    2 | 文档\ 目录 @acme/x 不是 # 注释
+      |                    ^^^^ owners must be @user, @org/team or an email address
+
+    error: `/日本語/[x]` isn't a valid pattern
+     --> <stdin>:4:1
+      |
+    4 | /日本語/[x] @acme/y
+      | ^^^^^^^^^^^ both `[` and `]` must be escaped with a `\`, like `/日本語/\[x\]`
+
+    warning: paths in git never have `.` or `..` segments, so GitHub matches nothing
+     --> <stdin>:5:1
+      |
+    5 | ..
+      | ^^
+    ");
+}
+
+#[test]
+fn check_reports_files_too_big_for_github_without_a_snippet() {
+    let repo = repo("check-size");
+    std::fs::write(
+        repo.0.join(".github/CODEOWNERS"),
+        "#".repeat(3 * 1024 * 1024 + 1),
+    )
+    .unwrap();
+    let (status, stdout, _) = run(&repo, &["check"]);
+    assert_eq!(status, 1);
+    assert_snapshot!(stdout, @r"
+    error: GitHub ignores CODEOWNERS files over 3145728 bytes, and this one is 3145729 bytes
+    --> .github/CODEOWNERS
+    ");
+}
+
+#[test]
+fn colors_only_for_terminals() {
+    let repo = repo("colors");
+    let (_, plain, _) = run(&repo, &["check", "--unused"]);
+    assert!(!plain.contains('\x1b'), "{plain}");
+    // Stdout is a pipe here, so ask for what a terminal gets.
+    let output = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
+        .args(["check", "--unused"])
+        .env("CLICOLOR_FORCE", "1")
+        .env_remove("NO_COLOR")
+        .current_dir(&repo.0)
+        .output()
+        .unwrap();
+    let styled = String::from_utf8(output.stdout).unwrap();
+    assert!(styled.starts_with("\x1b["), "{styled}");
 }
 
 #[test]
@@ -502,7 +591,7 @@ fn warns_when_github_ignores_rules_for_an_empty_codeowners() {
     let (_, stdout, _) = run(&repo, &["check"]);
     assert_eq!(
         stdout,
-        ".github/CODEOWNERS: warning: this file has no rules, but GitHub uses it instead of CODEOWNERS, so no file has an owner\n"
+        "warning: this file has no rules, but GitHub uses it instead of CODEOWNERS, so no file has an owner\n--> .github/CODEOWNERS\n"
     );
     // Not for a file named with --codeowners, which GitHub may not use.
     let (_, _, stderr) = run(&repo, &["list", "--codeowners", ".github/CODEOWNERS"]);

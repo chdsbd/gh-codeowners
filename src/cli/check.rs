@@ -1,5 +1,7 @@
+use std::ops::Range;
 use std::process::ExitCode;
 
+use annotate_snippets::{AnnotationKind, Group, Level, Origin, Renderer, Snippet};
 use gh_codeowners::codeowners::{LineProblem, find_problems};
 use gh_codeowners::report::{Status, problem_json, to_json};
 
@@ -20,7 +22,7 @@ pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<Exit
     } else if problems.is_empty() {
         format!("{}: no problems", display_path(file))
     } else {
-        problem_lines(&display_path(file), &problems)
+        problem_lines(&display_path(file), &file.text, &problems)
     })?;
     if problems.iter().any(|p| p.error) {
         return Ok(ExitCode::from(1));
@@ -28,16 +30,56 @@ pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<Exit
     Ok(ExitCode::SUCCESS)
 }
 
-pub(crate) fn problem_lines(display: &str, problems: &[LineProblem]) -> String {
-    let severity = |p: &LineProblem| if p.error { "error" } else { "warning" };
-    let lines: Vec<String> = problems
+/// Problems as rustc-style diagnostics, with their source lines. The styles
+/// are for `print_stdout`, which drops them when stdout isn't a terminal.
+pub(crate) fn problem_lines(display: &str, text: &str, problems: &[LineProblem]) -> String {
+    let renderer = Renderer::styled();
+    let reports: Vec<String> = problems
         .iter()
-        .map(|p| match p.lineno {
-            Some(n) => format!("{display}:{}: {}: {}", n + 1, severity(p), p.message),
-            None => format!("{display}: {}: {}", severity(p), p.message),
+        .map(|p| {
+            let level = if p.error {
+                Level::ERROR
+            } else {
+                Level::WARNING
+            };
+            let report = match (p.lineno, &p.span) {
+                (Some(lineno), Some(span)) => {
+                    // Just the line, since rendering scans all of its source.
+                    let (line, start) = line_containing(text, span);
+                    // A pattern or owner can't contain " - ", since it would
+                    // need an unescaped space.
+                    let (title, label) = match p.message.split_once(" - ") {
+                        Some((title, label)) => (title, Some(label)),
+                        None => (p.message.as_str(), None),
+                    };
+                    let snippet = Snippet::source(line)
+                        .path(display)
+                        .line_start(lineno + 1)
+                        .annotation(
+                            AnnotationKind::Primary
+                                .span(span.start - start..span.end - start)
+                                .label(label),
+                        );
+                    [Group::with_title(level.primary_title(title)).element(snippet)]
+                }
+                _ => [Group::with_title(level.primary_title(&p.message))
+                    .element(Origin::path(display))],
+            };
+            renderer.render(&report)
         })
         .collect();
-    lines.join("\n")
+    reports.join("\n\n")
+}
+
+/// The line of `text` containing `span`, without its line ending, and where
+/// it starts.
+fn line_containing<'a>(text: &'a str, span: &Range<usize>) -> (&'a str, usize) {
+    let start = text[..span.start].rfind('\n').map_or(0, |i| i + 1);
+    let end = text[span.end..]
+        .find('\n')
+        .map_or(text.len(), |i| span.end + i);
+    let line = &text[start..end];
+    (line.strip_suffix('\r').unwrap_or(line), start)
 }
 
 fn check_problems(file: &CodeownersFile, unused: bool) -> Result<Vec<LineProblem>, String> {
@@ -45,6 +87,7 @@ fn check_problems(file: &CodeownersFile, unused: bool) -> Result<Vec<LineProblem
     if let Some(message) = ignored_file_warning(file, "this file") {
         problems.push(LineProblem {
             lineno: None,
+            span: None,
             error: false,
             message,
         });
@@ -60,6 +103,7 @@ fn check_problems(file: &CodeownersFile, unused: bool) -> Result<Vec<LineProblem
             }
             problems.push(LineProblem {
                 lineno: Some(r.rule.lineno),
+                span: Some(r.rule.pattern_span.clone()),
                 error: true,
                 message: format!("`{}` owns no files - {}", r.rule.pattern, r.status.note()),
             });

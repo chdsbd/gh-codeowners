@@ -35,7 +35,7 @@ pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<Exit
                 .collect::<Vec<_>>(),
         )
     } else {
-        format_text_with_problems(&stats, &rules)
+        format_text_with_problems(&stats, &rules, &file.text)
     })?;
     Ok(ExitCode::SUCCESS)
 }
@@ -124,13 +124,13 @@ fn format_text(stats: &Stats, rules: &[&RuleStats]) -> String {
 
 /// The counts, then any problems, which explain rules that match nothing
 /// and lines GitHub skips, which aren't counted at all.
-fn format_text_with_problems(stats: &Stats, rules: &[&RuleStats]) -> String {
+fn format_text_with_problems(stats: &Stats, rules: &[&RuleStats], text: &str) -> String {
     let mut out = format_text(stats, rules);
     if !stats.problems.is_empty() {
         write!(
             out,
             "\n\n{}",
-            problem_lines(&stats.display_path, &stats.problems)
+            problem_lines(&stats.display_path, text, &stats.problems)
         )
         .unwrap();
     }

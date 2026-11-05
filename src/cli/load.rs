@@ -131,10 +131,10 @@ pub(crate) fn rule_list(rules: &[CodeownersRule]) -> Vec<Rule> {
         .collect()
 }
 
-/// Print a line to stdout. A reader that stops early, like `| head`, closes
+/// Print a line to stdout, without any styles if it isn't a terminal. A reader that stops early, like `| head`, closes
 /// the pipe; that isn't an error, so the exit code still reflects the run.
 pub(crate) fn print_stdout(text: &str) -> Result<(), String> {
-    match writeln!(io::stdout().lock(), "{text}") {
+    match writeln!(anstream::stdout().lock(), "{text}") {
         Err(error) if error.kind() != io::ErrorKind::BrokenPipe => {
             Err(format!("Couldn't write output: {error}"))
         }
