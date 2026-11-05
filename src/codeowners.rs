@@ -68,7 +68,17 @@ pub const MAX_CODEOWNERS_BYTES: u64 = 3 * 1024 * 1024;
 // request a review from that owner. So matching files have no owner.
 static OWNER: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"^(?:@[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?|[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})$",
+        r"(?x)
+        ^(?:
+            # @user or @org/team
+            @[A-Za-z0-9_-]+(?:/[A-Za-z0-9_-]+)?
+            |
+            # email local part
+            [A-Za-z0-9.!\#$%&'*+/=?^_`{|}~-]+
+            @
+            # email domain
+            [A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}
+        )$",
     )
     .unwrap()
 });
@@ -135,11 +145,6 @@ pub struct LineProblem {
     pub message: String,
 }
 
-/// Everything wrong in CODEOWNERS text. Errors are what GitHub's CODEOWNERS
-/// errors API reports, except owners that don't exist, which only GitHub can
-/// check. Warnings are lines GitHub accepts that likely don't do what they
-/// look like they do: patterns that match nothing, and `!` patterns, which
-/// don't negate.
 pub fn find_problems(text: &str) -> Vec<LineProblem> {
     let mut problems = Vec::new();
     if text.len() as u64 > MAX_CODEOWNERS_BYTES {
