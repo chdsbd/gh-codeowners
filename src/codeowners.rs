@@ -145,11 +145,6 @@ pub struct LineProblem {
     pub message: String,
 }
 
-/// Everything wrong in CODEOWNERS text. Errors are what GitHub's CODEOWNERS
-/// errors API reports, except owners that don't exist, which only GitHub can
-/// check. Warnings are lines GitHub accepts that likely don't do what they
-/// look like they do: patterns that match nothing, and `!` patterns, which
-/// don't negate.
 pub fn find_problems(text: &str) -> Vec<LineProblem> {
     let mut problems = Vec::new();
     if text.len() as u64 > MAX_CODEOWNERS_BYTES {
