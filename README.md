@@ -61,8 +61,17 @@ src/components/button.tsx: @acme/design, from .github/CODEOWNERS:6 /src/componen
 ```
 gh codeowners check
 
-.github/CODEOWNERS:7: error: `/app/[id]/` isn't a valid pattern - both `[` and `]` must be escaped with a `\`, like `/app/\[id\]/`
-.github/CODEOWNERS:9: warning: `!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories
+error: `/app/[id]/` isn't a valid pattern
+ --> .github/CODEOWNERS:7:1
+  |
+7 | /app/[id]/ @acme/web
+  | ^^^^^^^^^^ both `[` and `]` must be escaped with a `\`, like `/app/\[id\]/`
+
+warning: `!` doesn't negate a pattern on GitHub
+ --> .github/CODEOWNERS:9:1
+  |
+9 | !secrets @acme/security
+  | ^^^^^^^^ this matches files named like the rest of the pattern, but not directories
 ```
 
 ### Fail CI on errors or dead rules

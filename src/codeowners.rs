@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -11,6 +12,8 @@ pub struct CodeownersRule {
     pub owners: Vec<String>,
     // Zero-based line number in the CODEOWNERS file.
     pub lineno: usize,
+    // Byte range of the pattern in the CODEOWNERS file.
+    pub pattern_span: Range<usize>,
 }
 
 /// Where GitHub looks for CODEOWNERS, in the order it checks them.
@@ -83,53 +86,71 @@ static OWNER: LazyLock<Regex> = LazyLock::new(|| {
     .unwrap()
 });
 
+/// A word in a CODEOWNERS file, as written, with escapes.
+struct Word<'a> {
+    text: &'a str,
+    // Byte range in the CODEOWNERS file.
+    span: Range<usize>,
+}
+
 /// Split on whitespace up to a comment. Like on GitHub, an unescaped `#`
 /// starts a comment anywhere, even inside a pattern, and an escaped space
-/// is part of a pattern.
-fn split_words(line: &str) -> Vec<String> {
+/// is part of a pattern. `offset` is where `line` starts in the file.
+fn split_words(line: &str, offset: usize) -> Vec<Word<'_>> {
+    let word = |range: Range<usize>| Word {
+        text: &line[range.clone()],
+        span: range.start + offset..range.end + offset,
+    };
     let mut words = Vec::new();
-    let mut word = String::new();
-    let mut chars = line.chars();
-    while let Some(c) = chars.next() {
-        if c == '\\' {
-            word.push(c);
-            if let Some(next) = chars.next() {
-                word.push(next);
-            }
-        } else if c == '#' {
+    let mut start = None;
+    let mut end = line.len();
+    let mut chars = line.char_indices();
+    while let Some((i, c)) = chars.next() {
+        if c == '#' {
+            end = i;
             break;
         } else if c.is_whitespace() {
-            if !word.is_empty() {
-                words.push(std::mem::take(&mut word));
+            if let Some(start) = start.take() {
+                words.push(word(start..i));
             }
         } else {
-            word.push(c);
+            start.get_or_insert(i);
+            if c == '\\' {
+                chars.next();
+            }
         }
     }
-    if !word.is_empty() {
-        words.push(word);
+    if let Some(start) = start {
+        words.push(word(start..end));
     }
     words
 }
 
-/// Each line's pattern and owners, skipping blank lines and comments.
-fn lines(text: &str) -> impl Iterator<Item = (usize, String, Vec<String>)> {
-    text.split('\n').enumerate().filter_map(|(lineno, line)| {
-        let mut words = split_words(line.strip_suffix('\r').unwrap_or(line)).into_iter();
-        let pattern = words.next()?;
-        Some((lineno, pattern, words.collect()))
-    })
+/// Each line's number, pattern and owners, skipping blank lines and comments.
+fn lines(text: &str) -> impl Iterator<Item = (usize, Word<'_>, Vec<Word<'_>>)> {
+    let mut next_line = 0;
+    text.split('\n')
+        .enumerate()
+        .filter_map(move |(lineno, line)| {
+            let offset = next_line;
+            next_line += line.len() + 1;
+            let mut words =
+                split_words(line.strip_suffix('\r').unwrap_or(line), offset).into_iter();
+            let pattern = words.next()?;
+            Some((lineno, pattern, words.collect()))
+        })
 }
 
 /// Parse CODEOWNERS text into rules. Like GitHub, lines with an invalid
 /// owner are skipped.
 pub fn parse_codeowners(text: &str) -> Vec<CodeownersRule> {
     lines(text)
-        .filter(|(_, _, owners)| owners.iter().all(|owner| OWNER.is_match(owner)))
+        .filter(|(_, _, owners)| owners.iter().all(|owner| OWNER.is_match(owner.text)))
         .map(|(lineno, pattern, owners)| CodeownersRule {
-            pattern,
-            owners,
+            pattern: pattern.text.to_string(),
+            owners: owners.iter().map(|owner| owner.text.to_string()).collect(),
             lineno,
+            pattern_span: pattern.span,
         })
         .collect()
 }
@@ -139,6 +160,8 @@ pub fn parse_codeowners(text: &str) -> Vec<CodeownersRule> {
 pub struct LineProblem {
     /// Zero-based line number, or None for the whole file.
     pub lineno: Option<usize>,
+    /// Byte range of the offending word in the file, if it's on a line.
+    pub span: Option<Range<usize>>,
     /// Whether GitHub skips the line, or ignores the file. Otherwise GitHub
     /// accepts it, but it likely doesn't do what it looks like it does.
     pub error: bool,
@@ -150,6 +173,7 @@ pub fn find_problems(text: &str) -> Vec<LineProblem> {
     if text.len() as u64 > MAX_CODEOWNERS_BYTES {
         problems.push(LineProblem {
             lineno: None,
+            span: None,
             error: true,
             message: format!(
                 "GitHub ignores CODEOWNERS files over {MAX_CODEOWNERS_BYTES} bytes, and this one is {} bytes",
@@ -158,19 +182,22 @@ pub fn find_problems(text: &str) -> Vec<LineProblem> {
         });
     }
     for (lineno, pattern, owners) in lines(text) {
-        if let Some(problem) = pattern::problem(&pattern) {
+        if let Some(problem) = pattern::problem(pattern.text) {
             problems.push(LineProblem {
                 lineno: Some(lineno),
+                span: Some(pattern.span),
                 error: problem.invalid,
                 message: problem.message,
             });
         }
-        for owner in owners.iter().filter(|owner| !OWNER.is_match(owner)) {
+        for owner in owners.iter().filter(|owner| !OWNER.is_match(owner.text)) {
             problems.push(LineProblem {
                 lineno: Some(lineno),
+                span: Some(owner.span.clone()),
                 error: true,
                 message: format!(
-                    "`{owner}` isn't a valid owner - owners must be @user, @org/team or an email address"
+                    "`{}` isn't a valid owner - owners must be @user, @org/team or an email address",
+                    owner.text
                 ),
             });
         }
@@ -278,6 +305,45 @@ mod tests {
                 (Some(6), false),
             ]
         );
+    }
+
+    /// The text each problem's span covers.
+    fn spanned(text: &str) -> Vec<&str> {
+        find_problems(text)
+            .into_iter()
+            .map(|p| &text[p.span.unwrap()])
+            .collect()
+    }
+
+    #[test]
+    fn spans_cover_the_word_with_the_problem() {
+        // Owners, after a pattern with an escaped space, and a comment.
+        assert_eq!(
+            spanned("a\\ b  bad-owner\t@ok bad2 # bad3\n"),
+            ["bad-owner", "bad2"]
+        );
+        // A pattern ending at a comment.
+        assert_eq!(spanned("  [x]#y @a\n"), ["[x]"]);
+        // A pattern with an escaped space that has a problem.
+        assert_eq!(spanned("[a\\ b] @a\n"), ["[a\\ b]"]);
+        // After and inside non-ASCII text, including non-ASCII whitespace.
+        assert_eq!(spanned("# 日本語\n/日本語/ 文档\n"), ["文档"]);
+        assert_eq!(spanned("文档\u{3000}[語]\n"), ["[語]"]);
+        assert_eq!(spanned("[é\\é] @a\n"), ["[é\\é]"]);
+        // Each line ending, with and without a final newline.
+        assert_eq!(spanned("* @a\r\n\r\n[x] @a\r\n"), ["[x]"]);
+        assert_eq!(spanned("* @a\r\n* bad\r"), ["bad"]);
+        assert_eq!(spanned("* bad"), ["bad"]);
+    }
+
+    #[test]
+    fn rules_know_where_their_pattern_is() {
+        let text = "# 日本語\r\n  /docs/ @a\r\na\\ b\n";
+        let spans: Vec<_> = parse_codeowners(text)
+            .into_iter()
+            .map(|r| &text[r.pattern_span])
+            .collect();
+        assert_eq!(spans, ["/docs/", "a\\ b"]);
     }
 
     #[test]
