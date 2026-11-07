@@ -93,7 +93,10 @@ jobs:
           CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER: rust-lld
         run: |
           rustup toolchain install stable --profile minimal --target "$TARGET"
-          if [[ "$TARGET" == *musl ]]; then sudo apt-get install -y musl-tools; fi
+          if [[ "$TARGET" == *musl ]]; then
+            sudo apt-get update
+            sudo apt-get install -y musl-tools
+          fi
           cargo build --release --locked --target "$TARGET"
           asset="gh-codeowners-$PLATFORM$EXE"
           cp "target/$TARGET/release/gh-codeowners$EXE" "$asset"

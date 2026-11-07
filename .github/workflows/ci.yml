@@ -65,7 +65,9 @@ jobs:
       - run: rustup toolchain install stable --profile minimal --target "$TARGET"
         shell: bash
       - if: endsWith(matrix.target, '-musl')
-        run: sudo apt-get install -y musl-tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.target }}
