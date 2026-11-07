@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use crate::codeowners::CodeownersRule;
 use crate::pattern::Matcher;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +25,17 @@ pub struct Counts {
     // Files no rule matches.
     pub unowned: usize,
     pub rules: Vec<RuleCount>,
+}
+
+/// The rules to count for a parsed CODEOWNERS file.
+pub fn rule_list(rules: &[CodeownersRule]) -> Vec<Rule> {
+    rules
+        .iter()
+        .map(|r| Rule {
+            pattern: r.pattern.clone(),
+            lineno: r.lineno,
+        })
+        .collect()
 }
 
 fn literal_prefix(pattern: &str) -> Vec<u8> {

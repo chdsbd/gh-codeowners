@@ -13,7 +13,7 @@ use std::cell::RefCell;
 use gh_codeowners::codeowners::{
     CodeownersRule, MAX_CODEOWNERS_BYTES, find_problems, parse_codeowners,
 };
-use gh_codeowners::counter::{Rule, Rules, count};
+use gh_codeowners::counter::{Rules, count, rule_list};
 use gh_codeowners::owners_of;
 use gh_codeowners::report::{
     OwnershipJson, ProblemJson, RuleJson, Status, ownership_json, problem_json, rule_json, to_json,
@@ -166,16 +166,6 @@ fn rules(codeowners: &[u8]) -> Result<Vec<CodeownersRule>, String> {
         ));
     }
     Ok(parse_codeowners(text(codeowners)?))
-}
-
-fn rule_list(rules: &[CodeownersRule]) -> Vec<Rule> {
-    rules
-        .iter()
-        .map(|r| Rule {
-            pattern: r.pattern.clone(),
-            lineno: r.lineno,
-        })
-        .collect()
 }
 
 fn respond(result: Result<String, String>) -> u32 {

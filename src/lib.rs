@@ -12,26 +12,42 @@ use std::process::Command;
 
 use counter::{Counts, Rule, Rules, count};
 
+/// The files in a repository's git index, as `git ls-files` lists them.
+pub struct TrackedFiles(Vec<u8>);
+
+impl TrackedFiles {
+    /// List the files in `root`'s git index.
+    pub fn read(root: &Path) -> Result<TrackedFiles, String> {
+        let output = Command::new("git")
+            .args(["ls-files", "-z", "--cached"])
+            .current_dir(root)
+            .output()
+            .map_err(|error| format!("Couldn't run git: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "git ls-files exited with {}: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        Ok(TrackedFiles(output.stdout))
+    }
+
+    /// Each file's path, grouped by directory, as `count` expects.
+    pub fn paths(&self) -> Vec<&[u8]> {
+        let mut paths: Vec<&[u8]> = self.0.split(|&b| b == 0).collect();
+        // Every path ends in a NUL, which leaves an empty one at the end.
+        paths.pop();
+        // Conflicted files are listed once per stage.
+        paths.dedup();
+        paths
+    }
+}
+
 /// Count the files in `root`'s git index that each rule owns.
 pub fn count_tracked_files(root: &Path, rules: &[Rule]) -> Result<Counts, String> {
-    let output = Command::new("git")
-        .args(["ls-files", "-z", "--cached"])
-        .current_dir(root)
-        .output()
-        .map_err(|error| format!("Couldn't run git: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git ls-files exited with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let mut paths: Vec<&[u8]> = output.stdout.split(|&b| b == 0).collect();
-    // Every path ends in a NUL, which leaves an empty one at the end.
-    paths.pop();
-    // Conflicted files are listed once per stage.
-    paths.dedup();
-    Ok(count(&Rules::new(rules), &paths))
+    let files = TrackedFiles::read(root)?;
+    Ok(count(&Rules::new(rules), &files.paths()))
 }
 
 /// For each path, the index in `rules` of the rule that owns it: the last

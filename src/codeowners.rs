@@ -360,8 +360,8 @@ mod tests {
 
     #[test]
     fn finds_rules_github_ignores_for_an_empty_codeowners() {
-        let root =
-            std::env::temp_dir().join(format!("gh-codeowners-ignored-{}", std::process::id()));
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
         let write = |file: &str, text: &str| {
             let path = root.join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -373,15 +373,14 @@ mod tests {
         write("docs/CODEOWNERS", "* @acme/docs\n");
         for used in ["", "\n", "# no rules\n"] {
             assert_eq!(
-                ignored_codeowners(&root, used),
+                ignored_codeowners(root, used),
                 Some(root.join("docs/CODEOWNERS")),
                 "{used:?}"
             );
         }
-        assert_eq!(ignored_codeowners(&root, "* @acme/x\n"), None);
+        assert_eq!(ignored_codeowners(root, "* @acme/x\n"), None);
         write("docs/CODEOWNERS", "# nothing\n");
-        assert_eq!(ignored_codeowners(&root, ""), None);
-        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(ignored_codeowners(root, ""), None);
     }
 
     #[test]
