@@ -59,11 +59,6 @@ jobs:
               target: aarch64-unknown-linux-musl,
             }
           - {
-              platform: linux-arm,
-              os: ubuntu-latest,
-              target: armv7-unknown-linux-musleabihf,
-            }
-          - {
               platform: windows-amd64,
               os: windows-latest,
               target: x86_64-pc-windows-msvc,
@@ -89,8 +84,6 @@ jobs:
           EXE: ${{ matrix.exe }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          # GitHub has no 32-bit Arm runners, and this needs no cross-compiler.
-          CARGO_TARGET_ARMV7_UNKNOWN_LINUX_MUSLEABIHF_LINKER: rust-lld
         run: |
           rustup toolchain install stable --profile minimal --target "$TARGET"
           if [[ "$TARGET" == *musl ]]; then
