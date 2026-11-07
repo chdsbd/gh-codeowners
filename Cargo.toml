@@ -26,6 +26,10 @@ serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.154"
 url = "2.5.8"
 
+# WebAssembly can't read git's index, so its callers list the files.
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+gix = { version = "0.90.0", default-features = false, features = ["index", "sha1", "sha256"] }
+
 [profile.release]
 # The VS Code extension bundles a build per platform, so keep it small.
 strip = true

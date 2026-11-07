@@ -8,7 +8,7 @@ mod text;
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitCode};
+use std::process::ExitCode;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
@@ -28,7 +28,7 @@ use gh_codeowners::codeowners::{
 };
 use gh_codeowners::counter::{Rules, count, rule_list};
 use gh_codeowners::report::Status;
-use gh_codeowners::{TrackedFiles, owners_of};
+use gh_codeowners::{TrackedFiles, index_path, owners_of};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use serde::{Deserialize, Serialize};
 
@@ -421,28 +421,22 @@ impl<'a> Server<'a> {
         if !self.watch_files || !self.watched.insert(root.to_path_buf()) {
             return;
         }
-        // Worktrees and submodules keep their index outside `root`.
-        let Some(git_dir) = Command::new("git")
-            .args(["rev-parse", "--absolute-git-dir"])
-            .current_dir(root)
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
-            .and_then(|output| String::from_utf8(output.stdout).ok())
-            .map(|dir| PathBuf::from(dir.trim_end()))
-        else {
+        let Some(index) = index_path(root) else {
             return;
         };
-        let Ok(git_dir_uri) = Uri::from_file_path(&git_dir) else {
+        let (Some(dir), Some(name)) = (index.parent(), index.file_name()) else {
+            return;
+        };
+        let Ok(dir_uri) = Uri::from_file_path(dir) else {
             return;
         };
         let glob_pattern = if self.relative_patterns {
             GlobPattern::RelativePattern(RelativePattern {
-                base_uri: BaseUri::Uri(git_dir_uri),
-                pattern: "index".to_string(),
+                base_uri: BaseUri::Uri(dir_uri),
+                pattern: name.to_string_lossy().into_owned(),
             })
         } else {
-            GlobPattern::Pattern(git_dir.join("index").to_string_lossy().replace('\\', "/"))
+            GlobPattern::Pattern(index.to_string_lossy().replace('\\', "/"))
         };
         let options = DidChangeWatchedFilesRegistrationOptions {
             watchers: vec![FileSystemWatcher {
@@ -451,7 +445,7 @@ impl<'a> Server<'a> {
             }],
         };
         let registration = Registration {
-            id: format!("git-index:{}", git_dir.display()),
+            id: format!("git-index:{}", index.display()),
             method: LspNotificationMethod::WorkspaceDidChangeWatchedFiles.to_string(),
             register_options: Some(serde_json::to_value(options).unwrap()),
         };
