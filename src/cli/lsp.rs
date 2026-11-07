@@ -31,16 +31,16 @@ use lsp_types::{
     DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, FileSystemWatcher, GlobPattern, Hover,
     HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InlayHint,
-    InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, OneOf, PositionEncodingKind,
-    PublishDiagnosticsParams, Registration, RegistrationParams, RelativePattern, SaveOptions,
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, OneOf, PublishDiagnosticsParams,
+    Registration, RegistrationParams, RelativePattern, SaveOptions, ServerCapabilities,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
     TextDocumentSyncSaveOptions, Uri,
 };
 use serde::{Deserialize, Serialize};
 
 use super::load::{absolute, repo_display, rule_list};
 use super::view::repo_path;
-use text::{Encoding, LineIndex, path_to_uri, uri_to_path};
+use text::{LineIndex, path_to_uri, uri_to_path};
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -128,7 +128,6 @@ struct Analysis {
 
 struct Server<'a> {
     connection: &'a Connection,
-    encoding: Encoding,
     // Whether the client can watch git's index for us, and with patterns
     // relative to a directory.
     watch_files: bool,
@@ -151,19 +150,10 @@ struct Server<'a> {
 impl<'a> Server<'a> {
     fn new(connection: &'a Connection, params: &InitializeParams) -> Server<'a> {
         let capabilities = &params.capabilities;
-        let encoding = match capabilities
-            .general
-            .as_ref()
-            .and_then(|general| general.position_encodings.as_ref())
-        {
-            Some(encodings) if encodings.contains(&PositionEncodingKind::UTF8) => Encoding::Utf8,
-            _ => Encoding::Utf16,
-        };
         let workspace = capabilities.workspace.as_ref();
         let watched_files = workspace.and_then(|w| w.did_change_watched_files.as_ref());
         Server {
             connection,
-            encoding,
             watch_files: watched_files.and_then(|w| w.dynamic_registration) == Some(true),
             relative_patterns: watched_files.and_then(|w| w.relative_pattern_support) == Some(true),
             refresh_inlay_hints: workspace
@@ -182,10 +172,6 @@ impl<'a> Server<'a> {
 
     fn capabilities(&self) -> ServerCapabilities {
         ServerCapabilities {
-            position_encoding: Some(match self.encoding {
-                Encoding::Utf8 => PositionEncodingKind::UTF8,
-                Encoding::Utf16 => PositionEncodingKind::UTF16,
-            }),
             text_document_sync: Some(TextDocumentSyncCapability::Options(
                 TextDocumentSyncOptions {
                     open_close: Some(true),
@@ -285,7 +271,7 @@ impl<'a> Server<'a> {
                 };
                 let document = params.text_document;
                 let key = document.uri.as_str().to_string();
-                let path = uri_to_path(document.uri.as_str());
+                let path = uri_to_path(&document.uri);
                 if let (Some(path), false) = (&path, self.watch_files) {
                     // Nothing says when git's index changes, so list again.
                     self.files.remove(&repo_root_for_codeowners(path));
@@ -331,7 +317,7 @@ impl<'a> Server<'a> {
                     return;
                 }
                 // Nothing says when git's index changes, so list again.
-                let path = uri_to_path(params.text_document.uri.as_str());
+                let path = uri_to_path(&params.text_document.uri);
                 if let Some(root) = path.as_deref().map(repo_root_for_codeowners) {
                     self.files.remove(&root);
                     let uris: Vec<String> = self
@@ -492,7 +478,6 @@ impl<'a> Server<'a> {
                 &document.text,
                 document.path.as_deref().zip(root.as_deref()),
                 files.as_deref(),
-                self.encoding,
             );
             document.analysis = Some(Rc::new(analysis));
         }
@@ -518,8 +503,8 @@ impl<'a> Server<'a> {
 
     fn hover(&mut self, params: &HoverParams) -> Option<Hover> {
         let position = &params.text_document_position_params;
-        let (analysis, document) = self.analysis(position.text_document.uri.as_str())?;
-        let offset = analysis.index.offset(&document.text, position.position)?;
+        let (analysis, _) = self.analysis(position.text_document.uri.as_str())?;
+        let offset = analysis.index.offset(position.position)?;
         let counts = analysis.counts.as_ref()?;
         let (rule, &(owned, status)) = analysis.rules.iter().zip(counts).find(|(rule, _)| {
             rule.pattern_span.contains(&offset) || rule.pattern_span.end == offset
@@ -569,7 +554,7 @@ impl<'a> Server<'a> {
     }
 
     fn owner(&mut self, params: &OwnerParams) -> Result<Option<OwnerResult>, String> {
-        let path = uri_to_path(params.uri.as_str())
+        let path = uri_to_path(&params.uri)
             .ok_or_else(|| format!("{} isn't a file", params.uri.as_str()))?;
         let Some(root) = path.parent().and_then(find_repo_root) else {
             return Ok(None);
@@ -596,7 +581,7 @@ impl<'a> Server<'a> {
         let repo_path = repo_path(&root, &path.to_string_lossy())?;
         let rules = parse_codeowners(&text);
         let owner = owners_of(&rule_list(&rules), &[&repo_path])[0];
-        let index = LineIndex::new(&text, self.encoding);
+        let index = LineIndex::new(&text);
         Ok(Some(OwnerResult {
             path: repo_path,
             codeowners: path_to_uri(&absolute(&codeowners)),
@@ -611,12 +596,7 @@ impl<'a> Server<'a> {
 
 /// Analyze CODEOWNERS text, from the file at `location.0` in the repository
 /// at `location.1`, if it's a file, counting `files` if they're known.
-fn analyze(
-    text: &str,
-    location: Option<(&Path, &Path)>,
-    files: Option<&TrackedFiles>,
-    encoding: Encoding,
-) -> Analysis {
+fn analyze(text: &str, location: Option<(&Path, &Path)>, files: Option<&TrackedFiles>) -> Analysis {
     let rules = parse_codeowners(text);
     let mut problems = find_problems(text);
     if let Some((path, root)) = location {
@@ -631,7 +611,7 @@ fn analyze(
             .collect()
     });
     Analysis {
-        index: LineIndex::new(text, encoding),
+        index: LineIndex::new(text),
         rules,
         problems,
         counts,

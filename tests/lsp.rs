@@ -304,24 +304,6 @@ fn shows_how_many_files_each_rule_owns() {
 }
 
 #[test]
-fn counts_columns_in_utf8_when_the_client_can() {
-    let repo = repo("utf8");
-    let codeowners = repo.0.join(".github/CODEOWNERS");
-    let mut client = Client::start(
-        &repo.0,
-        json!({ "general": { "positionEncodings": ["utf-8", "utf-16"] } }),
-    );
-    client.open(&codeowners, "/日本語/ @a [x]\n");
-    let diagnostics = client.notification("textDocument/publishDiagnostics");
-    // The owner `[x]` starts after 15 bytes, though only 9 UTF-16 units.
-    assert_eq!(
-        diagnostics["diagnostics"][0]["range"]["start"],
-        json!({ "line": 0, "character": 15 })
-    );
-    assert_eq!(client.shutdown(), 0);
-}
-
-#[test]
 fn warns_about_codeowners_files_github_ignores() {
     let repo = repo("ignored");
     write(&repo.0, "CODEOWNERS", "* @acme/x\n");
