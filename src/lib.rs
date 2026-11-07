@@ -7,32 +7,13 @@ pub mod counter;
 pub mod pattern;
 pub mod report;
 
-use std::path::Path;
-use std::process::Command;
+// WebAssembly can't read git's index, so its callers list the files.
+#[cfg(not(target_family = "wasm"))]
+mod tracked;
+#[cfg(not(target_family = "wasm"))]
+pub use tracked::{count_tracked_files, tracked_files};
 
-use counter::{Counts, Rule, Rules, count};
-
-/// Count the files in `root`'s git index that each rule owns.
-pub fn count_tracked_files(root: &Path, rules: &[Rule]) -> Result<Counts, String> {
-    let output = Command::new("git")
-        .args(["ls-files", "-z", "--cached"])
-        .current_dir(root)
-        .output()
-        .map_err(|error| format!("Couldn't run git: {error}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "git ls-files exited with {}: {}",
-            output.status,
-            String::from_utf8_lossy(&output.stderr).trim()
-        ));
-    }
-    let mut paths: Vec<&[u8]> = output.stdout.split(|&b| b == 0).collect();
-    // Every path ends in a NUL, which leaves an empty one at the end.
-    paths.pop();
-    // Conflicted files are listed once per stage.
-    paths.dedup();
-    Ok(count(&Rules::new(rules), &paths))
-}
+use counter::Rule;
 
 /// For each path, the index in `rules` of the rule that owns it: the last
 /// one matching the path or a directory containing it. Paths needn't be in

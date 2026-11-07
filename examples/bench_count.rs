@@ -16,13 +16,7 @@ fn main() {
             lineno: r.lineno,
         })
         .collect();
-    let output = std::process::Command::new("git")
-        .args(["ls-files", "-z"])
-        .current_dir(&root)
-        .output()
-        .unwrap();
-    let mut paths: Vec<&[u8]> = output.stdout.split(|&b| b == 0).collect();
-    paths.pop();
+    let paths = gh_codeowners::tracked_files(&root).unwrap();
     let compiled = Rules::new(&rules);
     for _ in 0..rounds {
         let t = Instant::now();
