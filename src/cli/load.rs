@@ -2,8 +2,7 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use gh_codeowners::codeowners::{
-    MAX_CODEOWNERS_BYTES, find_codeowners, find_repo_root, ignored_codeowners,
-    repo_root_for_codeowners,
+    find_codeowners, find_repo_root, ignored_codeowners, repo_root_for_codeowners,
 };
 use path_slash::PathExt as _;
 
@@ -78,7 +77,7 @@ pub(crate) fn display_path(file: &CodeownersFile) -> String {
 
 /// `path` relative to `root`, for messages. Inside the repository, it's a
 /// repository path, written with `/` like the paths of the files it owns.
-fn repo_display(root: &Path, path: &Path) -> String {
+pub(crate) fn repo_display(root: &Path, path: &Path) -> String {
     let path = absolute(path);
     match path.strip_prefix(absolute(root)) {
         Ok(relative) => relative.to_slash_lossy().into_owned(),
@@ -87,11 +86,16 @@ fn repo_display(root: &Path, path: &Path) -> String {
 }
 
 pub(crate) fn ignored_file_warning(file: &CodeownersFile, subject: &str) -> Option<String> {
-    let ignored = file.ignored.as_ref()?;
-    let ignored = repo_display(&file.root, ignored);
-    Some(format!(
-        "{subject} has no rules, but GitHub uses it instead of {ignored}, so no file has an owner"
-    ))
+    Some(ignored_message(subject, &file.root, file.ignored.as_ref()?))
+}
+
+/// The warning for a CODEOWNERS file, `subject`, with no rules that GitHub
+/// uses instead of `ignored`, which has some.
+pub(crate) fn ignored_message(subject: &str, root: &Path, ignored: &Path) -> String {
+    format!(
+        "{subject} has no rules, but GitHub uses it instead of {}, so no file has an owner",
+        repo_display(root, ignored)
+    )
 }
 
 /// Warn that GitHub ignores another CODEOWNERS file's rules. On stderr, so it
@@ -100,21 +104,6 @@ pub(crate) fn warn_if_ignored(file: &CodeownersFile) {
     if let Some(message) = ignored_file_warning(file, &display_path(file)) {
         eprintln!("{}: warning: {message}", crate::program_name());
     }
-}
-
-pub(crate) fn too_big(file: &CodeownersFile) -> bool {
-    file.text.len() as u64 > MAX_CODEOWNERS_BYTES
-}
-
-pub(crate) fn check_size(file: &CodeownersFile) -> Result<(), String> {
-    if too_big(file) {
-        return Err(format!(
-            "{} is {} bytes, over GitHub's limit of {MAX_CODEOWNERS_BYTES}, so GitHub ignores it",
-            display_path(file),
-            file.text.len()
-        ));
-    }
-    Ok(())
 }
 
 /// Print a line to stdout, without any styles if it isn't a terminal. A reader that stops early, like `| head`, closes

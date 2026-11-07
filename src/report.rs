@@ -3,6 +3,7 @@
 use serde::Serialize;
 
 use crate::codeowners::{CodeownersRule, LineProblem};
+use crate::counter::RuleCount;
 
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -16,11 +17,11 @@ pub enum Status {
 }
 
 impl Status {
-    /// The status of a rule that owns `owned` files, and matches any.
-    pub fn new(owned: usize, matches_any: bool) -> Status {
-        if owned > 0 {
+    /// The status of a rule with these counts.
+    pub fn new(count: &RuleCount) -> Status {
+        if count.owned > 0 {
             Status::Active
-        } else if matches_any {
+        } else if count.matches_any {
             Status::Overridden
         } else {
             Status::Unmatched

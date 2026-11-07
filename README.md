@@ -39,6 +39,7 @@ gh codeowners <command> [flags]
           that own no files. Exits with status 1 if there are errors.
   list    List each rule with how many files it owns
   view    Show the rule that owns each path
+  lsp     Run a language server for CODEOWNERS files
 
   --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one
                        GitHub would use)
@@ -79,6 +80,22 @@ warning: `!` doesn't negate a pattern on GitHub
 ```
 gh codeowners check --unused
 ```
+
+### Editor support
+
+`gh codeowners lsp` is a language server over stdin and stdout, used by the [VS Code extension](https://github.com/chdsbd/vscode-github-code-owners). It checks CODEOWNERS files as you type, and shows how many files each rule owns, as inlay hints and on hover. Rules that own no files are reported as unnecessary.
+
+It counts files from git's index, and lists them again when the client reports `.git/index` changed, which it asks for with `client/registerCapability`. Clients without dynamic file watching get fresh counts when a CODEOWNERS file is opened or saved.
+
+A `gh-codeowners/owner` request finds the rule that owns a file, including unsaved changes to its CODEOWNERS file:
+
+```
+--> {"uri": "file:///repo/docs/guide.md"}
+<-- {"path": "docs/guide.md", "codeowners": "file:///repo/.github/CODEOWNERS",
+     "rule": {"range": {...}, "pattern": "/docs/", "owners": ["@acme/docs"]}}
+```
+
+The result is `null` outside a repository with a CODEOWNERS file, and `rule` is `null` when no rule matches.
 
 ## Matching
 

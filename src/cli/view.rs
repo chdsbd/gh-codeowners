@@ -1,16 +1,14 @@
 use std::path::Path;
 use std::process::ExitCode;
 
-use gh_codeowners::codeowners::{CodeownersRule, parse_codeowners};
+use gh_codeowners::codeowners::{CodeownersRule, check_size, parse_codeowners};
 use gh_codeowners::counter::rule_list;
 use gh_codeowners::owners_of;
 use gh_codeowners::report::{ownership_json, to_json};
 use path_clean::PathClean as _;
 use path_slash::PathExt as _;
 
-use super::load::{
-    CodeownersFile, absolute, check_size, display_path, print_stdout, warn_if_ignored,
-};
+use super::load::{CodeownersFile, absolute, display_path, print_stdout, warn_if_ignored};
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -34,7 +32,7 @@ pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<Exit
     Ok(ExitCode::SUCCESS)
 }
 
-fn repo_path(root: &Path, path: &str) -> Result<String, String> {
+pub(crate) fn repo_path(root: &Path, path: &str) -> Result<String, String> {
     let given = absolute(Path::new(path)).clean();
     let outside = || format!("{path} isn't in {}", root.display());
     // Either may be spelled through a symlink, like /var on macOS, so find the
@@ -59,7 +57,7 @@ fn ownership(
     file: &CodeownersFile,
     paths: &[String],
 ) -> Result<Vec<(String, Option<CodeownersRule>)>, String> {
-    check_size(file)?;
+    check_size(&display_path(file), &file.text)?;
     let rules = parse_codeowners(&file.text);
     let paths = paths
         .iter()

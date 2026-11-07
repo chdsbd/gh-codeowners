@@ -4,27 +4,15 @@ use std::process::Command;
 use insta::assert_snapshot;
 use tempfile::TempDir;
 
-type Repo = TempDir;
+mod common;
+use common::{git, write};
 
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .status()
-        .unwrap();
-    assert!(status.success());
-}
+type Repo = TempDir;
 
 fn repo(name: &str) -> Repo {
     let repo = TempDir::with_prefix(format!("gh-codeowners-cli-{name}-")).unwrap();
     let dir = repo.path();
-    let write = |file: &str, text: &str| {
-        let path = dir.join(file);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, text).unwrap();
-    };
+    let write = |file: &str, text: &str| write(dir, file, text);
     write(
         ".github/CODEOWNERS",
         "*           @acme/platform\n/docs/      @acme/docs\n*.md        @acme/writers\n/missing/   @acme/nobody",

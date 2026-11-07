@@ -10,9 +10,7 @@
 
 use std::cell::RefCell;
 
-use gh_codeowners::codeowners::{
-    CodeownersRule, MAX_CODEOWNERS_BYTES, find_problems, parse_codeowners,
-};
+use gh_codeowners::codeowners::{CodeownersRule, check_size, find_problems, parse_codeowners};
 use gh_codeowners::counter::{Rules, count, rule_list};
 use gh_codeowners::owners_of;
 use gh_codeowners::report::{
@@ -73,7 +71,7 @@ pub unsafe extern "C" fn count_files(
             rules: rules
                 .iter()
                 .zip(&counts.rules)
-                .map(|(rule, c)| rule_json(rule, c.owned, Status::new(c.owned, c.matches_any)))
+                .map(|(rule, c)| rule_json(rule, c.owned, Status::new(c)))
                 .collect(),
         })
     }))
@@ -159,12 +157,7 @@ fn text(codeowners: &[u8]) -> Result<&str, String> {
 
 /// The file's rules, or an error if GitHub would ignore the file.
 fn rules(codeowners: &[u8]) -> Result<Vec<CodeownersRule>, String> {
-    if codeowners.len() as u64 > MAX_CODEOWNERS_BYTES {
-        return Err(format!(
-            "CODEOWNERS is {} bytes, over GitHub's limit of {MAX_CODEOWNERS_BYTES}, so GitHub ignores it",
-            codeowners.len()
-        ));
-    }
+    check_size("CODEOWNERS", codeowners)?;
     Ok(parse_codeowners(text(codeowners)?))
 }
 

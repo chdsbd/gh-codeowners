@@ -1,29 +1,11 @@
 use std::path::Path;
-use std::process::Command;
 
 use gh_codeowners::count_tracked_files;
 use gh_codeowners::counter::Rule;
 use tempfile::TempDir;
 
-fn git(dir: &Path, args: &[&str]) {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        // Ignore the user's git config, like core.fsmonitor or index.version.
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_AUTHOR_NAME", "test")
-        .env("GIT_AUTHOR_EMAIL", "test@example.com")
-        .env("GIT_COMMITTER_NAME", "test")
-        .env("GIT_COMMITTER_EMAIL", "test@example.com")
-        .output()
-        .unwrap();
-    assert!(
-        output.status.success() || args[0] == "merge",
-        "git {args:?}: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
+mod common;
+use common::{git, git_output, write};
 
 fn empty_dir(name: &str) -> TempDir {
     TempDir::with_prefix(format!("gh-codeowners-{name}-")).unwrap()
@@ -33,9 +15,7 @@ fn make_repo(name: &str) -> TempDir {
     let repo = empty_dir(name);
     git(repo.path(), &["init", "-q", "-b", "main"]);
     for file in ["a/1", "a/b/2", "c/3", "é.txt", "with space", "z"] {
-        let path = repo.path().join(file);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, format!("{file}\n")).unwrap();
+        write(repo.path(), file, &format!("{file}\n"));
     }
     git(repo.path(), &["add", "."]);
     git(repo.path(), &["commit", "-qm", "init"]);
@@ -64,7 +44,8 @@ fn counts_conflicted_files_once() {
     git(repo.path(), &["checkout", "-q", "main"]);
     std::fs::write(repo.path().join("z"), "main\n").unwrap();
     git(repo.path(), &["commit", "-qam", "main"]);
-    git(repo.path(), &["merge", "-q", "other"]);
+    // Conflicts, on purpose.
+    git_output(repo.path(), &["merge", "-q", "other"]);
     assert_eq!(count_everything(repo.path()), Ok(6));
 }
 
