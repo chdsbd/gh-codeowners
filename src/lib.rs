@@ -11,7 +11,7 @@ pub mod report;
 #[cfg(not(target_family = "wasm"))]
 mod tracked;
 #[cfg(not(target_family = "wasm"))]
-pub use tracked::{TrackedFiles, count_tracked_files};
+pub use tracked::{TrackedFiles, count_tracked_files, index_path};
 
 use counter::Rule;
 

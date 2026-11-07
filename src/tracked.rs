@@ -1,6 +1,6 @@
 //! Reading the files in git's index.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::counter::{Counts, Rule, Rules, count};
 
@@ -60,6 +60,13 @@ fn read(root: &Path) -> Result<Vec<Vec<u8>>, String> {
         }
     }
     Ok(paths)
+}
+
+/// The path of git's index for the repository containing `root`. Worktrees
+/// and submodules keep it outside `root`.
+pub fn index_path(root: &Path) -> Option<PathBuf> {
+    let repo = gix::discover_with_environment_overrides(root).ok()?;
+    std::path::absolute(repo.index_path()).ok()
 }
 
 /// `root` relative to the repository's working tree, with a trailing slash,

@@ -1,7 +1,7 @@
 use std::path::Path;
 
 use gh_codeowners::counter::Rule;
-use gh_codeowners::{TrackedFiles, count_tracked_files};
+use gh_codeowners::{TrackedFiles, count_tracked_files, index_path};
 use tempfile::TempDir;
 
 mod common;
@@ -334,4 +334,25 @@ fn lists_an_index_with_a_file_system_monitor() {
     git(repo.path(), &["status", "-s"]);
     assert!(has_extension(repo.path(), b"FSMN"));
     assert_lists_like_git(repo.path());
+}
+
+#[test]
+fn finds_the_index_where_git_does() {
+    let repo = make_repo("index-path");
+    let linked = empty_dir("index-path-linked");
+    std::fs::remove_dir(linked.path()).unwrap();
+    git(
+        repo.path(),
+        &["worktree", "add", "-q", linked.path().to_str().unwrap()],
+    );
+    for dir in [repo.path(), linked.path(), &repo.path().join("a")] {
+        let expected = git_stdout(
+            dir,
+            &["rev-parse", "--path-format=absolute", "--git-path", "index"],
+        );
+        let expected = std::fs::canonicalize(String::from_utf8(expected).unwrap().trim()).unwrap();
+        let actual = std::fs::canonicalize(index_path(dir).unwrap()).unwrap();
+        assert_eq!(actual, expected);
+    }
+    assert_eq!(index_path(empty_dir("no-index-path").path()), None);
 }
