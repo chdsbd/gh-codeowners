@@ -2,21 +2,29 @@ use std::ops::Range;
 use std::process::ExitCode;
 
 use annotate_snippets::{AnnotationKind, Group, Level, Origin, Renderer, Snippet};
-use gh_codeowners::codeowners::{CodeownersRule, LineProblem, find_problems, too_big};
+use gh_codeowners::codeowners::{
+    CodeownersRule, LineProblem, find_problems, parse_codeowners, too_big,
+};
 use gh_codeowners::report::{Status, problem_json, to_json};
 
 use super::list::stats_for;
 use super::load::{CodeownersFile, display_path, ignored_file_warning, print_stdout};
+use super::online::{gh_get, repository, team_problems};
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
     /// Report rules that own no files as errors too
     #[arg(long)]
     unused: bool,
+    /// Report teams that can't write to the repository, or that GitHub can't
+    /// see, as errors too. Asks GitHub's API with gh, about the repository gh
+    /// finds in --root, or GH_REPO
+    #[arg(long)]
+    online: bool,
 }
 
 pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<ExitCode, String> {
-    let problems = check_problems(file, args.unused)?;
+    let problems = check_problems(file, args)?;
     print_stdout(&if json {
         to_json(&problems.iter().map(problem_json).collect::<Vec<_>>())
     } else if problems.is_empty() {
@@ -77,7 +85,7 @@ fn line_containing<'a>(text: &'a str, span: &Range<usize>) -> (&'a str, usize) {
     (line.strip_suffix('\r').unwrap_or(line), start)
 }
 
-fn check_problems(file: &CodeownersFile, unused: bool) -> Result<Vec<LineProblem>, String> {
+fn check_problems(file: &CodeownersFile, args: &Args) -> Result<Vec<LineProblem>, String> {
     let mut problems = find_problems(&file.text);
     if let Some(message) = ignored_file_warning(file, "this file") {
         problems.push(LineProblem {
@@ -89,11 +97,16 @@ fn check_problems(file: &CodeownersFile, unused: bool) -> Result<Vec<LineProblem
     }
     // oversized files are reported via find_problems.
     // We don't bother counting if the file is too large.
-    if unused && !too_big(&file.text) {
+    if args.unused && !too_big(&file.text) {
         let stats = stats_for(file)?;
         let rules = stats.rules.iter().map(|r| (&r.rule, r.status));
         let unused = unused_problems(rules, &problems);
         problems.extend(unused);
+    }
+    if args.online && !too_big(&file.text) {
+        let get = |endpoint: &str| gh_get(&file.root, endpoint);
+        let repo = repository(&get)?;
+        problems.extend(team_problems(&parse_codeowners(&file.text), &repo, &get)?);
     }
     problems.sort_by_key(|p| p.lineno);
     Ok(problems)

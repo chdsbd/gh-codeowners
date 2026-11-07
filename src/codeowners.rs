@@ -14,6 +14,8 @@ pub struct CodeownersRule {
     pub lineno: usize,
     // Byte range of the pattern in the CODEOWNERS file.
     pub pattern_span: Range<usize>,
+    // Byte range of each owner in the CODEOWNERS file.
+    pub owner_spans: Vec<Range<usize>>,
 }
 
 /// Where GitHub looks for CODEOWNERS, in the order it checks them.
@@ -166,6 +168,7 @@ pub fn parse_codeowners(text: &str) -> Vec<CodeownersRule> {
         .map(|(lineno, pattern, owners)| CodeownersRule {
             pattern: pattern.text.to_string(),
             owners: owners.iter().map(|owner| owner.text.to_string()).collect(),
+            owner_spans: owners.iter().map(|owner| owner.span.clone()).collect(),
             lineno,
             pattern_span: pattern.span,
         })

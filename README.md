@@ -8,7 +8,6 @@ A CLI for [GitHub CODEOWNERS](https://docs.github.com/en/repositories/managing-y
 
 ## TODOs
 
-- [ ] `--online` flag for querying GitHub api to validate teams have write access to repository.
 - [ ] `--fs` support count files in disk instead of git index
 
 ## Install
@@ -35,8 +34,9 @@ cargo install --git https://github.com/chdsbd/gh-codeowners
 ```
 gh codeowners <command> [flags]
 
-  check   Check CODEOWNERS for lines GitHub rejects, and with --unused, rules
-          that own no files. Exits with status 1 if there are errors.
+  check   Check CODEOWNERS for lines GitHub rejects, with --unused, rules
+          that own no files, and with --online, teams that can't write to
+          the repository. Exits with status 1 if there are errors.
   list    List each rule with how many files it owns
   view    Show the rule that owns each path
   lsp     Run a language server for CODEOWNERS files
@@ -80,6 +80,22 @@ warning: `!` doesn't negate a pattern on GitHub
 ```
 gh codeowners check --unused
 ```
+
+### Check teams can review
+
+GitHub only requests reviews from teams that are visible and can write to the repository. `--online` asks GitHub's API, with `gh`, about each team:
+
+```
+gh codeowners check --online
+
+error: `@acme/docs` can't write to acme/app
+ --> .github/CODEOWNERS:2:13
+  |
+2 | /docs/      @acme/docs
+  |             ^^^^^^^^^^ code owner teams must have write access
+```
+
+It checks the repository `gh` finds from the git remote, or `GH_REPO`.
 
 ### Editor support
 
