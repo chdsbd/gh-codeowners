@@ -16,8 +16,8 @@ use counter::{Counts, Rule, Rules, count};
 pub struct TrackedFiles(Vec<u8>);
 
 impl TrackedFiles {
-    /// List the files in `root`'s git index, relative to `root`.
-    pub fn list(root: &Path) -> Result<TrackedFiles, String> {
+    /// List the files in `root`'s git index.
+    pub fn read(root: &Path) -> Result<TrackedFiles, String> {
         let output = Command::new("git")
             .args(["ls-files", "-z", "--cached"])
             .current_dir(root)
@@ -33,7 +33,7 @@ impl TrackedFiles {
         Ok(TrackedFiles(output.stdout))
     }
 
-    /// Each file's path, in git's order.
+    /// Each file's path, grouped by directory, as `count` expects.
     pub fn paths(&self) -> Vec<&[u8]> {
         let mut paths: Vec<&[u8]> = self.0.split(|&b| b == 0).collect();
         // Every path ends in a NUL, which leaves an empty one at the end.
@@ -42,16 +42,12 @@ impl TrackedFiles {
         paths.dedup();
         paths
     }
-
-    /// Count the files each rule owns.
-    pub fn count(&self, rules: &[Rule]) -> Counts {
-        count(&Rules::new(rules), &self.paths())
-    }
 }
 
 /// Count the files in `root`'s git index that each rule owns.
 pub fn count_tracked_files(root: &Path, rules: &[Rule]) -> Result<Counts, String> {
-    Ok(TrackedFiles::list(root)?.count(rules))
+    let files = TrackedFiles::read(root)?;
+    Ok(count(&Rules::new(rules), &files.paths()))
 }
 
 /// For each path, the index in `rules` of the rule that owns it: the last

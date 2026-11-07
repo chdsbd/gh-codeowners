@@ -23,16 +23,17 @@ use gen_lsp_types::{
     TextDocumentSyncOptions, Uri,
 };
 use gh_codeowners::codeowners::{
-    CODEOWNERS_LOCATIONS, CodeownersRule, LineProblem, find_codeowners, find_problems,
+    CODEOWNERS_LOCATIONS, CodeownersRule, LineProblem, check_size, find_codeowners, find_problems,
     find_repo_root, ignored_codeowners, parse_codeowners, repo_root_for_codeowners, too_big,
 };
+use gh_codeowners::counter::{Rules, count, rule_list};
 use gh_codeowners::report::Status;
 use gh_codeowners::{TrackedFiles, owners_of};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use serde::{Deserialize, Serialize};
 
 use super::check::unused_problems;
-use super::load::{absolute, check_size, ignored_message, repo_display, rule_list};
+use super::load::{absolute, ignored_message, repo_display};
 use super::plural;
 use super::view::repo_path;
 use text::LineIndex;
@@ -396,7 +397,7 @@ impl<'a> Server<'a> {
         if let Some(files) = self.files.get(root) {
             return files.clone();
         }
-        let files = match TrackedFiles::list(root) {
+        let files = match TrackedFiles::read(root) {
             Ok(files) => Some(Rc::new(files)),
             Err(message) => {
                 // Shown in the client's log. Outside a repository is common
@@ -597,8 +598,7 @@ fn analyze(text: &str, location: Option<(&Path, &Path)>, files: Option<&TrackedF
         problems.extend(location_problem(text, path, root));
     }
     let counts = files.map(|files| {
-        files
-            .count(&rule_list(&rules))
+        count(&Rules::new(&rule_list(&rules)), &files.paths())
             .rules
             .into_iter()
             .map(|c| (c.owned, Status::new(&c)))

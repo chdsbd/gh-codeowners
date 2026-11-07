@@ -1,30 +1,39 @@
 //! Drives `gh-codeowners lsp` like an editor would, over stdin and stdout.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use tempfile::TempDir;
 
 mod common;
-use common::{Repo, git};
+use common::{git, write};
+
+/// A repository's path, and the temporary directory it's in.
+struct Repo(
+    PathBuf,
+    #[expect(dead_code, reason = "deletes the directory when dropped")] TempDir,
+);
 
 fn repo(name: &str) -> Repo {
-    let mut repo = Repo::new(&format!("lsp-{name}"));
-    repo.write(".github/CODEOWNERS", "* @acme/platform\n");
-    repo.write("Makefile", "");
-    repo.write("docs/guide.md", "");
-    repo.write("src/main.ts", "");
-    git(&repo.0, &["init", "-q"]);
-    git(&repo.0, &["add", "."]);
+    let dir = TempDir::with_prefix(format!("gh-codeowners-lsp-{name}-")).unwrap();
+    write(dir.path(), ".github/CODEOWNERS", "* @acme/platform\n");
+    write(dir.path(), "Makefile", "");
+    write(dir.path(), "docs/guide.md", "");
+    write(dir.path(), "src/main.ts", "");
+    git(dir.path(), &["init", "-q"]);
+    git(dir.path(), &["add", "."]);
     // The real path, as an editor would have it, since the temporary
     // directory is a symlink on macOS. Windows would add a `\\?\` prefix.
-    if !cfg!(windows) {
-        repo.0 = std::fs::canonicalize(&repo.0).unwrap();
-    }
-    repo
+    let path = if cfg!(windows) {
+        dir.path().to_path_buf()
+    } else {
+        std::fs::canonicalize(dir.path()).unwrap()
+    };
+    Repo(path, dir)
 }
 
 fn uri(path: &Path) -> String {
@@ -282,7 +291,7 @@ fn shows_how_many_files_each_rule_owns() {
 #[test]
 fn warns_about_codeowners_files_github_ignores() {
     let repo = repo("ignored");
-    repo.write("CODEOWNERS", "* @acme/x\n");
+    write(&repo.0, "CODEOWNERS", "* @acme/x\n");
     let ignored = repo.0.join("CODEOWNERS");
     let mut client = Client::start(&repo.0, json!({}));
     client.open(&ignored, "* @acme/x\n");
@@ -391,7 +400,7 @@ fn counts_again_when_gits_index_changes() {
     assert!(pattern["baseUri"].as_str().unwrap().ends_with("/.git"));
     assert_eq!(pattern["pattern"], "index");
 
-    repo.write("lib/a.rs", "");
+    write(&repo.0, "lib/a.rs", "");
     git(&repo.0, &["add", "."]);
     client.notify(
         "workspace/didChangeWatchedFiles",

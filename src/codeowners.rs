@@ -64,9 +64,21 @@ pub fn repo_root_for_codeowners(codeowners: &Path) -> PathBuf {
 /// 3 MB", but it loads files of exactly 3 MiB.
 pub const MAX_CODEOWNERS_BYTES: u64 = 3 * 1024 * 1024;
 
-/// Whether GitHub ignores CODEOWNERS `text` for being too big.
-pub fn too_big(text: &str) -> bool {
-    text.len() as u64 > MAX_CODEOWNERS_BYTES
+/// Whether GitHub ignores a CODEOWNERS file with `text` for being too big.
+pub fn too_big(text: impl AsRef<[u8]>) -> bool {
+    text.as_ref().len() as u64 > MAX_CODEOWNERS_BYTES
+}
+
+/// Fail if GitHub ignores the CODEOWNERS file shown as `display`, with
+/// `text`, for being too big.
+pub fn check_size(display: &str, text: impl AsRef<[u8]>) -> Result<(), String> {
+    let len = text.as_ref().len();
+    if len as u64 > MAX_CODEOWNERS_BYTES {
+        return Err(format!(
+            "{display} is {len} bytes, over GitHub's limit of {MAX_CODEOWNERS_BYTES}, so GitHub ignores it"
+        ));
+    }
+    Ok(())
 }
 
 // An owner GitHub accepts: @user, @org/team, or an email address with a dot
@@ -377,8 +389,8 @@ mod tests {
 
     #[test]
     fn finds_rules_github_ignores_for_an_empty_codeowners() {
-        let root =
-            std::env::temp_dir().join(format!("gh-codeowners-ignored-{}", std::process::id()));
+        let dir = tempfile::TempDir::new().unwrap();
+        let root = dir.path();
         let write = |file: &str, text: &str| {
             let path = root.join(file);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -390,15 +402,14 @@ mod tests {
         write("docs/CODEOWNERS", "* @acme/docs\n");
         for used in ["", "\n", "# no rules\n"] {
             assert_eq!(
-                ignored_codeowners(&root, used),
+                ignored_codeowners(root, used),
                 Some(root.join("docs/CODEOWNERS")),
                 "{used:?}"
             );
         }
-        assert_eq!(ignored_codeowners(&root, "* @acme/x\n"), None);
+        assert_eq!(ignored_codeowners(root, "* @acme/x\n"), None);
         write("docs/CODEOWNERS", "# nothing\n");
-        assert_eq!(ignored_codeowners(&root, ""), None);
-        std::fs::remove_dir_all(&root).unwrap();
+        assert_eq!(ignored_codeowners(root, ""), None);
     }
 
     #[test]

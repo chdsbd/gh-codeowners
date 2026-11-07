@@ -3,33 +3,14 @@
 // Each test crate uses only some of these.
 #![allow(dead_code)]
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
 
-/// A temporary directory, deleted when dropped.
-pub struct Repo(pub PathBuf);
-
-impl Repo {
-    /// An empty directory, named for the test so tests can run in parallel.
-    pub fn new(name: &str) -> Repo {
-        let dir = std::env::temp_dir().join(format!("gh-codeowners-{name}-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        Repo(dir)
-    }
-
-    /// Write `text` to `file`, creating its directories.
-    pub fn write(&self, file: &str, text: &str) {
-        let path = self.0.join(file);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, text).unwrap();
-    }
-}
-
-impl Drop for Repo {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
+/// Write `text` to `file` in `dir`, creating its directories.
+pub fn write(dir: &Path, file: &str, text: &str) {
+    let path = dir.join(file);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, text).unwrap();
 }
 
 /// Run git in `dir`, ignoring the user's git config, like core.fsmonitor or

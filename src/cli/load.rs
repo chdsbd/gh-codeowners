@@ -2,10 +2,9 @@ use std::io::{self, Write as _};
 use std::path::{Path, PathBuf};
 
 use gh_codeowners::codeowners::{
-    CodeownersRule, MAX_CODEOWNERS_BYTES, find_codeowners, find_repo_root, ignored_codeowners,
-    repo_root_for_codeowners, too_big,
+    find_codeowners, find_repo_root, ignored_codeowners, repo_root_for_codeowners,
 };
-use gh_codeowners::counter::Rule;
+use path_slash::PathExt as _;
 
 use crate::Cli;
 
@@ -81,11 +80,7 @@ pub(crate) fn display_path(file: &CodeownersFile) -> String {
 pub(crate) fn repo_display(root: &Path, path: &Path) -> String {
     let path = absolute(path);
     match path.strip_prefix(absolute(root)) {
-        Ok(relative) => relative
-            .components()
-            .map(|c| c.as_os_str().to_string_lossy())
-            .collect::<Vec<_>>()
-            .join("/"),
+        Ok(relative) => relative.to_slash_lossy().into_owned(),
         Err(_) => path.display().to_string(),
     }
 }
@@ -109,28 +104,6 @@ pub(crate) fn warn_if_ignored(file: &CodeownersFile) {
     if let Some(message) = ignored_file_warning(file, &display_path(file)) {
         eprintln!("{}: warning: {message}", crate::program_name());
     }
-}
-
-/// Fail if GitHub ignores the CODEOWNERS file shown as `display`, whose
-/// text is `text`, for being too big.
-pub(crate) fn check_size(display: &str, text: &str) -> Result<(), String> {
-    if too_big(text) {
-        return Err(format!(
-            "{display} is {} bytes, over GitHub's limit of {MAX_CODEOWNERS_BYTES}, so GitHub ignores it",
-            text.len()
-        ));
-    }
-    Ok(())
-}
-
-pub(crate) fn rule_list(rules: &[CodeownersRule]) -> Vec<Rule> {
-    rules
-        .iter()
-        .map(|r| Rule {
-            pattern: r.pattern.clone(),
-            lineno: r.lineno,
-        })
-        .collect()
 }
 
 /// Print a line to stdout, without any styles if it isn't a terminal. A reader that stops early, like `| head`, closes
