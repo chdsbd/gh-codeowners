@@ -15,7 +15,8 @@ serde = { version = "1.0.229", features = ["derive"] }
 [profile.release]
 codegen-units = 1
 lto = true
-opt-level = "s"
+# Counts files about 30% faster than "s", for about 10% more size.
+opt-level = 3
 panic = "abort"
 strip = true
 
