@@ -4,15 +4,31 @@ use std::path::Path;
 
 use crate::counter::{Counts, Rule, Rules, count};
 
+/// The files in a repository's git index, as `git ls-files` lists them.
+pub struct TrackedFiles(Vec<Vec<u8>>);
+
+impl TrackedFiles {
+    /// List the files in `root`'s git index.
+    pub fn read(root: &Path) -> Result<TrackedFiles, String> {
+        read(root).map(TrackedFiles)
+    }
+
+    /// Each file's path, grouped by directory, as `count` expects.
+    pub fn paths(&self) -> Vec<&[u8]> {
+        self.0.iter().map(Vec::as_slice).collect()
+    }
+}
+
 /// Count the files in `root`'s git index that each rule owns.
 pub fn count_tracked_files(root: &Path, rules: &[Rule]) -> Result<Counts, String> {
-    Ok(count(&Rules::new(rules), &tracked_files(root)?))
+    let files = TrackedFiles::read(root)?;
+    Ok(count(&Rules::new(rules), &files.paths()))
 }
 
 /// The files in the git index of the repository containing `root`, relative
 /// to `root`, like `git ls-files` run there lists them: each path once, even
 /// when conflicted, and files outside a sparse checkout too.
-pub fn tracked_files(root: &Path) -> Result<Vec<Vec<u8>>, String> {
+fn read(root: &Path) -> Result<Vec<Vec<u8>>, String> {
     let error =
         |error: gix::Error| format!("Couldn't read git's index in {}: {error}", root.display());
     let repo = gix::discover_with_environment_overrides(root).map_err(error)?;

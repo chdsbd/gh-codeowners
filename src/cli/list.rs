@@ -3,14 +3,16 @@ use std::process::ExitCode;
 
 use comfy_table::presets::NOTHING;
 use comfy_table::{CellAlignment, Table};
-use gh_codeowners::codeowners::{CodeownersRule, LineProblem, find_problems, parse_codeowners};
+use gh_codeowners::codeowners::{
+    CodeownersRule, LineProblem, check_size, find_problems, parse_codeowners,
+};
 use gh_codeowners::count_tracked_files;
+use gh_codeowners::counter::rule_list;
 use gh_codeowners::report::{Status, rule_json, to_json};
 
 use super::check::problem_lines;
-use super::load::{
-    CodeownersFile, check_size, display_path, print_stdout, rule_list, warn_if_ignored,
-};
+use super::load::{CodeownersFile, display_path, print_stdout, warn_if_ignored};
+use super::plural;
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -55,7 +57,7 @@ pub(crate) struct Stats {
 }
 
 pub(crate) fn stats_for(file: &CodeownersFile) -> Result<Stats, String> {
-    check_size(file)?;
+    check_size(&display_path(file), &file.text)?;
     let rules = parse_codeowners(&file.text);
     let counts = count_tracked_files(&file.root, &rule_list(&rules))?;
     Ok(Stats {
@@ -68,15 +70,11 @@ pub(crate) fn stats_for(file: &CodeownersFile) -> Result<Stats, String> {
             .map(|(rule, c)| RuleStats {
                 rule,
                 files: c.owned,
-                status: Status::new(c.owned, c.matches_any),
+                status: Status::new(&c),
             })
             .collect(),
         problems: find_problems(&file.text),
     })
-}
-
-fn plural(n: usize, word: &str) -> String {
-    format!("{n} {word}{}", if n == 1 { "" } else { "s" })
 }
 
 fn format_text(stats: &Stats, rules: &[&RuleStats]) -> String {

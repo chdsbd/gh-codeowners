@@ -2,34 +2,17 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use insta::assert_snapshot;
+use tempfile::TempDir;
 
-struct Repo(PathBuf);
+mod common;
+use common::{git, write};
 
-impl Drop for Repo {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .status()
-        .unwrap();
-    assert!(status.success());
-}
+type Repo = TempDir;
 
 fn repo(name: &str) -> Repo {
-    let dir = std::env::temp_dir().join(format!("gh-codeowners-cli-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let write = |file: &str, text: &str| {
-        let path = dir.join(file);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, text).unwrap();
-    };
+    let repo = TempDir::with_prefix(format!("gh-codeowners-cli-{name}-")).unwrap();
+    let dir = repo.path();
+    let write = |file: &str, text: &str| write(dir, file, text);
     write(
         ".github/CODEOWNERS",
         "*           @acme/platform\n/docs/      @acme/docs\n*.md        @acme/writers\n/missing/   @acme/nobody",
@@ -39,17 +22,17 @@ fn repo(name: &str) -> Repo {
     write("src/main.ts", "");
     write("build/out.js", "");
     write(".gitignore", "build/\n");
-    git(&dir, &["init", "-q"]);
-    git(&dir, &["add", "."]);
+    git(dir, &["init", "-q"]);
+    git(dir, &["add", "."]);
     // Only files in git's index count.
     write("notes.md", "");
-    Repo(dir)
+    repo
 }
 
 fn run(repo: &Repo, args: &[&str]) -> (i32, String, String) {
     let output = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
         .args(args)
-        .current_dir(&repo.0)
+        .current_dir(repo.path())
         .output()
         .unwrap();
     (
@@ -84,7 +67,7 @@ fn a_closed_stdout_is_not_an_error() {
     let repo = repo("closed-stdout");
     let mut child = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
         .args(["check", "--unused"])
-        .current_dir(&repo.0)
+        .current_dir(repo.path())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
@@ -127,20 +110,17 @@ fn json_unused_lists_only_rules_that_own_nothing() {
 
 #[test]
 fn exits_with_2_when_theres_no_codeowners() {
-    let empty =
-        std::env::temp_dir().join(format!("gh-codeowners-cli-empty-{}", std::process::id()));
-    std::fs::create_dir_all(&empty).unwrap();
+    let empty = TempDir::new().unwrap();
     let (status, _, stderr) = run(
         &repo("missing"),
-        &["list", "--root", empty.to_str().unwrap()],
+        &["list", "--root", empty.path().to_str().unwrap()],
     );
-    std::fs::remove_dir_all(&empty).unwrap();
     assert_eq!(status, 2);
     assert_eq!(
         stderr,
         format!(
             "gh-codeowners: No CODEOWNERS file found in {}\n",
-            empty.display()
+            empty.path().display()
         )
     );
 }
@@ -153,10 +133,10 @@ fn rejects_codeowners_files_github_ignores_for_size() {
     let mut text = "* @acme/platform\n".to_string();
     text.push_str(&"#".repeat(limit - text.len() - 1));
     text.push('\n');
-    std::fs::write(repo.0.join(".github/CODEOWNERS"), &text).unwrap();
+    std::fs::write(repo.path().join(".github/CODEOWNERS"), &text).unwrap();
     assert_eq!(run(&repo, &["list"]).0, 0);
     text.push('#');
-    std::fs::write(repo.0.join(".github/CODEOWNERS"), &text).unwrap();
+    std::fs::write(repo.path().join(".github/CODEOWNERS"), &text).unwrap();
     let (status, _, stderr) = run(&repo, &["list"]);
     assert_eq!(status, 2);
     assert!(
@@ -172,7 +152,7 @@ fn run_with_stdin(repo: &Repo, args: &[&str], stdin: &str) -> (i32, String, Stri
     use std::io::Write as _;
     let mut child = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
         .args(args)
-        .current_dir(&repo.0)
+        .current_dir(repo.path())
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -196,7 +176,7 @@ fn run_with_stdin(repo: &Repo, args: &[&str], stdin: &str) -> (i32, String, Stri
 fn owner_of_prints_the_rule_that_owns_each_file() {
     let repo = repo("owner-of");
     // An absolute path, and files that aren't tracked or don't exist.
-    let main = repo.0.join("src/main.ts");
+    let main = repo.path().join("src/main.ts");
     let (status, stdout, _) = run(
         &repo,
         &[
@@ -400,7 +380,7 @@ fn check_underlines_words_after_crlf_and_non_ascii_text() {
 fn check_reports_files_too_big_for_github_without_a_snippet() {
     let repo = repo("check-size");
     std::fs::write(
-        repo.0.join(".github/CODEOWNERS"),
+        repo.path().join(".github/CODEOWNERS"),
         "#".repeat(3 * 1024 * 1024 + 1),
     )
     .unwrap();
@@ -422,7 +402,7 @@ fn colors_only_for_terminals() {
         .args(["check", "--unused"])
         .env("CLICOLOR_FORCE", "1")
         .env_remove("NO_COLOR")
-        .current_dir(&repo.0)
+        .current_dir(repo.path())
         .output()
         .unwrap();
     let styled = String::from_utf8(output.stdout).unwrap();
@@ -469,7 +449,7 @@ fn calls_itself_gh_codeowners_as_a_gh_extension() {
     let output = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
         .args(["view"])
         .env("GH_EXTENSION", "1")
-        .current_dir(&repo.0)
+        .current_dir(repo.path())
         .output()
         .unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
@@ -492,7 +472,7 @@ fn run_in(dir: &Path, args: &[&str]) -> (i32, String, String) {
 #[test]
 fn works_from_a_subdirectory() {
     let repo = repo("subdirectory");
-    let docs = repo.0.join("docs");
+    let docs = repo.path().join("docs");
     let (status, stdout, _) = run_in(&docs, &["list"]);
     assert_eq!(status, 0);
     assert!(
@@ -526,23 +506,24 @@ fn owner_of_treats_directories_as_directories() {
     ");
 }
 
-/// A symlink to `repo`, for spelling its path another way.
+/// A symlink to `repo`, for spelling its path another way, in a directory
+/// that's removed with it.
 #[cfg(unix)]
-fn symlink_to(repo: &Repo) -> Repo {
-    let link = repo.0.with_extension("link");
-    let _ = std::fs::remove_file(&link);
-    std::os::unix::fs::symlink(&repo.0, &link).unwrap();
-    Repo(link)
+fn symlink_to(repo: &Repo) -> (TempDir, PathBuf) {
+    let dir = TempDir::new().unwrap();
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(repo.path(), &link).unwrap();
+    (dir, link)
 }
 
 #[cfg(unix)]
 #[test]
 fn view_accepts_a_root_or_path_spelled_through_a_symlink() {
     let repo = repo("view-root-symlink");
-    let link = symlink_to(&repo);
-    let through_link = link.0.join("src/main.ts");
+    let (_dir, link) = symlink_to(&repo);
+    let through_link = link.join("src/main.ts");
     for args in [
-        vec!["view", "--root", link.0.to_str().unwrap(), "src/main.ts"],
+        vec!["view", "--root", link.to_str().unwrap(), "src/main.ts"],
         vec!["view", through_link.to_str().unwrap()],
     ] {
         let (status, stdout, stderr) = run(&repo, &args);
@@ -558,13 +539,13 @@ fn view_accepts_a_root_or_path_spelled_through_a_symlink() {
 #[test]
 fn view_keeps_symlinks_inside_the_repository_as_written() {
     let repo = repo("view-inner-symlink");
-    std::os::unix::fs::symlink("src", repo.0.join("link")).unwrap();
-    let link = symlink_to(&repo);
+    std::os::unix::fs::symlink("src", repo.path().join("link")).unwrap();
+    let (_dir, link) = symlink_to(&repo);
     // Git tracks a symlink as a file, so its path is the repository path,
     // however the root is spelled.
     for args in [
         vec!["view", "link/main.ts"],
-        vec!["view", "--root", link.0.to_str().unwrap(), "link/main.ts"],
+        vec!["view", "--root", link.to_str().unwrap(), "link/main.ts"],
     ] {
         let (status, stdout, stderr) = run(&repo, &args);
         assert_eq!((status, stderr.as_str()), (0, ""));
@@ -578,8 +559,8 @@ fn view_keeps_symlinks_inside_the_repository_as_written() {
 #[test]
 fn warns_when_github_ignores_rules_for_an_empty_codeowners() {
     let repo = repo("ignored");
-    std::fs::write(repo.0.join(".github/CODEOWNERS"), "\n").unwrap();
-    std::fs::write(repo.0.join("CODEOWNERS"), "* @acme/platform\n").unwrap();
+    std::fs::write(repo.path().join(".github/CODEOWNERS"), "\n").unwrap();
+    std::fs::write(repo.path().join("CODEOWNERS"), "* @acme/platform\n").unwrap();
     let warning = ".github/CODEOWNERS has no rules, but GitHub uses it instead of CODEOWNERS, so no file has an owner";
     let (status, stdout, stderr) = run(&repo, &["list"]);
     assert_eq!(status, 0);

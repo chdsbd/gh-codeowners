@@ -1,13 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::ExitCode;
 
-use gh_codeowners::codeowners::{CodeownersRule, parse_codeowners};
+use gh_codeowners::codeowners::{CodeownersRule, check_size, parse_codeowners};
+use gh_codeowners::counter::rule_list;
 use gh_codeowners::owners_of;
 use gh_codeowners::report::{ownership_json, to_json};
+use path_clean::PathClean as _;
+use path_slash::PathExt as _;
 
-use super::load::{
-    CodeownersFile, absolute, check_size, display_path, print_stdout, rule_list, warn_if_ignored,
-};
+use super::load::{CodeownersFile, absolute, display_path, print_stdout, warn_if_ignored};
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -31,8 +32,8 @@ pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<Exit
     Ok(ExitCode::SUCCESS)
 }
 
-fn repo_path(root: &Path, path: &str) -> Result<String, String> {
-    let given = normalize(&absolute(Path::new(path)));
+pub(crate) fn repo_path(root: &Path, path: &str) -> Result<String, String> {
+    let given = absolute(Path::new(path)).clean();
     let outside = || format!("{path} isn't in {}", root.display());
     // Either may be spelled through a symlink, like /var on macOS, so find the
     // root by where it resolves to. The rest stays as written, since git tracks
@@ -43,10 +44,7 @@ fn repo_path(root: &Path, path: &str) -> Result<String, String> {
         .find(|ancestor| std::fs::canonicalize(ancestor).is_ok_and(|real| real == real_root))
         .ok_or_else(outside)?;
     let relative = given.strip_prefix(entry).expect("an ancestor");
-    let mut relative = relative.to_string_lossy().into_owned();
-    if cfg!(windows) {
-        relative = relative.replace('\\', "/");
-    }
+    let mut relative = relative.to_slash_lossy().into_owned();
     // Directories end in a slash, so rules for directories match them.
     if !relative.is_empty() && given.is_dir() {
         relative.push('/');
@@ -54,26 +52,12 @@ fn repo_path(root: &Path, path: &str) -> Result<String, String> {
     Ok(relative)
 }
 
-fn normalize(path: &Path) -> PathBuf {
-    let mut normal = PathBuf::new();
-    for component in path.components() {
-        match component {
-            std::path::Component::CurDir => {}
-            std::path::Component::ParentDir => {
-                normal.pop();
-            }
-            component => normal.push(component),
-        }
-    }
-    normal
-}
-
 /// Each path to view, and the rule that owns it.
 fn ownership(
     file: &CodeownersFile,
     paths: &[String],
 ) -> Result<Vec<(String, Option<CodeownersRule>)>, String> {
-    check_size(file)?;
+    check_size(&display_path(file), &file.text)?;
     let rules = parse_codeowners(&file.text);
     let paths = paths
         .iter()

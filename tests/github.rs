@@ -1,17 +1,7 @@
 // Checks every file ownership recorded from GitHub in tests/github.txt and
 // tests/github-rules.txt.
-use gh_codeowners::codeowners::{CodeownersRule, find_problems, parse_codeowners};
-use gh_codeowners::counter::{Rule, Rules, count};
-
-fn rule_list(rules: &[CodeownersRule]) -> Vec<Rule> {
-    rules
-        .iter()
-        .map(|r| Rule {
-            pattern: r.pattern.clone(),
-            lineno: r.lineno,
-        })
-        .collect()
-}
+use gh_codeowners::codeowners::{find_problems, parse_codeowners};
+use gh_codeowners::counter::{Rules, count, rule_list};
 
 fn owns(line: &str, path: &str) -> bool {
     let rules = rule_list(&parse_codeowners(line));
