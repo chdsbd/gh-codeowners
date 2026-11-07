@@ -12,6 +12,16 @@ use std::process::{Command, ExitCode};
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use gen_lsp_types::{
+    BaseUri, Contents, Diagnostic, DiagnosticSeverity, DiagnosticTag, DidChangeTextDocumentParams,
+    DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, FileSystemWatcher, GlobPattern, Hover,
+    HoverParams, HoverProvider, InitializeParams, InlayHint, InlayHintParams, InlayHintProvider,
+    Label, LspNotificationMethod, LspRequestMethod, MarkupContent, MarkupKind,
+    PublishDiagnosticsParams, Registration, RegistrationParams, RelativePattern, Save, SaveOptions,
+    ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentSync, TextDocumentSyncKind,
+    TextDocumentSyncOptions, Uri,
+};
 use gh_codeowners::codeowners::{
     CODEOWNERS_LOCATIONS, CodeownersRule, LineProblem, MAX_CODEOWNERS_BYTES, find_codeowners,
     find_problems, find_repo_root, ignored_codeowners, parse_codeowners, repo_root_for_codeowners,
@@ -19,28 +29,11 @@ use gh_codeowners::codeowners::{
 use gh_codeowners::report::Status;
 use gh_codeowners::{TrackedFiles, owners_of};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
-use lsp_types::notification::{
-    DidChangeTextDocument, DidChangeWatchedFiles, DidCloseTextDocument, DidOpenTextDocument,
-    DidSaveTextDocument, Exit, Notification as _, PublishDiagnostics,
-};
-use lsp_types::request::{
-    HoverRequest, InlayHintRefreshRequest, InlayHintRequest, RegisterCapability, Request as _,
-};
-use lsp_types::{
-    Diagnostic, DiagnosticSeverity, DiagnosticTag, DidChangeTextDocumentParams,
-    DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DidSaveTextDocumentParams, FileSystemWatcher, GlobPattern, Hover,
-    HoverContents, HoverParams, HoverProviderCapability, InitializeParams, InlayHint,
-    InlayHintLabel, InlayHintParams, MarkupContent, MarkupKind, OneOf, PublishDiagnosticsParams,
-    Registration, RegistrationParams, RelativePattern, SaveOptions, ServerCapabilities,
-    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
-    TextDocumentSyncSaveOptions, Uri,
-};
 use serde::{Deserialize, Serialize};
 
 use super::load::{absolute, repo_display, rule_list};
 use super::view::repo_path;
-use text::{LineIndex, path_to_uri, uri_to_path};
+use text::LineIndex;
 
 #[derive(clap::Args)]
 pub(crate) struct Args {
@@ -69,7 +62,7 @@ struct OwnerResult {
     /// The file's path in its repository.
     path: String,
     /// The CODEOWNERS file GitHub uses for the file's repository.
-    codeowners: String,
+    codeowners: Uri,
     /// The rule that owns the file, if any.
     rule: Option<OwnerRule>,
 }
@@ -77,7 +70,7 @@ struct OwnerResult {
 #[derive(Serialize)]
 struct OwnerRule {
     /// Where the pattern is in the CODEOWNERS file.
-    range: lsp_types::Range,
+    range: gen_lsp_types::Range,
     pattern: String,
     owners: Vec<String>,
 }
@@ -172,18 +165,16 @@ impl<'a> Server<'a> {
 
     fn capabilities(&self) -> ServerCapabilities {
         ServerCapabilities {
-            text_document_sync: Some(TextDocumentSyncCapability::Options(
-                TextDocumentSyncOptions {
-                    open_close: Some(true),
-                    change: Some(TextDocumentSyncKind::FULL),
-                    save: Some(TextDocumentSyncSaveOptions::SaveOptions(SaveOptions {
-                        include_text: Some(false),
-                    })),
-                    ..Default::default()
-                },
-            )),
-            hover_provider: Some(HoverProviderCapability::Simple(true)),
-            inlay_hint_provider: Some(OneOf::Left(true)),
+            text_document_sync: Some(TextDocumentSync::Options(TextDocumentSyncOptions {
+                open_close: Some(true),
+                change: Some(TextDocumentSyncKind::Full),
+                save: Some(Save::SaveOptions(SaveOptions {
+                    include_text: Some(false),
+                })),
+                ..Default::default()
+            })),
+            hover_provider: Some(HoverProvider::Bool(true)),
+            inlay_hint_provider: Some(InlayHintProvider::Bool(true)),
             ..Default::default()
         }
     }
@@ -215,7 +206,7 @@ impl<'a> Server<'a> {
                     self.handle_request(request);
                 }
                 Some(Message::Notification(notification)) => {
-                    if notification.method == Exit::METHOD {
+                    if notification.method == LspNotificationMethod::Exit.as_str() {
                         return Ok(false);
                     }
                     self.handle_notification(notification);
@@ -239,7 +230,7 @@ impl<'a> Server<'a> {
             }
             self.publish_at = Some(now);
             if self.refresh_inlay_hints {
-                self.send_request(InlayHintRefreshRequest::METHOD, ());
+                self.send_request(LspRequestMethod::WorkspaceInlayHintRefresh, ());
             }
         }
         if self.publish_at.is_some_and(|at| at <= now) {
@@ -255,23 +246,22 @@ impl<'a> Server<'a> {
         let _ = self.connection.sender.send(message.into());
     }
 
-    fn send_request(&mut self, method: &str, params: impl Serialize) {
+    fn send_request(&mut self, method: LspRequestMethod, params: impl Serialize) {
         self.next_request += 1;
         let id = RequestId::from(format!("gh-codeowners-{}", self.next_request));
-        self.send(Request::new(id, method.to_string(), params));
+        self.send(Request::new(id, method.as_str().to_string(), params));
     }
 
     fn handle_notification(&mut self, notification: Notification) {
-        match notification.method.as_str() {
-            DidOpenTextDocument::METHOD => {
-                let Ok(params) =
-                    notification.extract::<DidOpenTextDocumentParams>(DidOpenTextDocument::METHOD)
-                else {
+        let method = notification.method.clone();
+        match LspNotificationMethod::from(method.as_str()) {
+            LspNotificationMethod::TextDocumentDidOpen => {
+                let Ok(params) = notification.extract::<DidOpenTextDocumentParams>(&method) else {
                     return;
                 };
                 let document = params.text_document;
                 let key = document.uri.as_str().to_string();
-                let path = uri_to_path(&document.uri);
+                let path = document.uri.to_file_path().ok();
                 if let (Some(path), false) = (&path, self.watch_files) {
                     // Nothing says when git's index changes, so list again.
                     self.files.remove(&repo_root_for_codeowners(path));
@@ -289,35 +279,44 @@ impl<'a> Server<'a> {
                 self.changed(&key);
                 self.publish_at = Some(Instant::now());
             }
-            DidChangeTextDocument::METHOD => {
-                let Ok(params) = notification
-                    .extract::<DidChangeTextDocumentParams>(DidChangeTextDocument::METHOD)
+            LspNotificationMethod::TextDocumentDidChange => {
+                let Ok(params) = notification.extract::<DidChangeTextDocumentParams>(&method)
                 else {
                     return;
                 };
-                let key = params.text_document.uri.as_str().to_string();
+                let key = params
+                    .text_document
+                    .text_document_identifier
+                    .uri
+                    .as_str()
+                    .to_string();
                 let Some(document) = self.documents.get_mut(&key) else {
                     return;
                 };
                 // Changes are whole documents, as the server asks for.
                 if let Some(change) = params.content_changes.into_iter().last() {
-                    document.text = change.text;
+                    document.text = match change {
+                        TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(
+                            change,
+                        ) => change.text,
+                        TextDocumentContentChangeEvent::TextDocumentContentChangePartial(
+                            change,
+                        ) => change.text,
+                    };
                 }
                 document.version = params.text_document.version;
                 self.changed(&key);
                 self.publish_at = Some(Instant::now() + EDIT_DEBOUNCE);
             }
-            DidSaveTextDocument::METHOD => {
-                let Ok(params) =
-                    notification.extract::<DidSaveTextDocumentParams>(DidSaveTextDocument::METHOD)
-                else {
+            LspNotificationMethod::TextDocumentDidSave => {
+                let Ok(params) = notification.extract::<DidSaveTextDocumentParams>(&method) else {
                     return;
                 };
                 if self.watch_files {
                     return;
                 }
                 // Nothing says when git's index changes, so list again.
-                let path = uri_to_path(&params.text_document.uri);
+                let path = params.text_document.uri.to_file_path().ok();
                 if let Some(root) = path.as_deref().map(repo_root_for_codeowners) {
                     self.files.remove(&root);
                     let uris: Vec<String> = self
@@ -334,21 +333,23 @@ impl<'a> Server<'a> {
                     self.publish_at = Some(Instant::now());
                 }
             }
-            DidCloseTextDocument::METHOD => {
-                let Ok(params) = notification
-                    .extract::<DidCloseTextDocumentParams>(DidCloseTextDocument::METHOD)
-                else {
+            LspNotificationMethod::TextDocumentDidClose => {
+                let Ok(params) = notification.extract::<DidCloseTextDocumentParams>(&method) else {
                     return;
                 };
                 let key = params.text_document.uri.as_str();
                 self.documents.remove(key);
                 self.unpublished.remove(key);
                 self.send(Notification::new(
-                    PublishDiagnostics::METHOD.to_string(),
-                    PublishDiagnosticsParams::new(params.text_document.uri, Vec::new(), None),
+                    LspNotificationMethod::TextDocumentPublishDiagnostics.to_string(),
+                    PublishDiagnosticsParams {
+                        uri: params.text_document.uri,
+                        version: None,
+                        diagnostics: Vec::new(),
+                    },
                 ));
             }
-            DidChangeWatchedFiles::METHOD => {
+            LspNotificationMethod::WorkspaceDidChangeWatchedFiles => {
                 // Only git's index is watched.
                 self.relist_at = Some(Instant::now() + INDEX_DEBOUNCE);
             }
@@ -366,21 +367,22 @@ impl<'a> Server<'a> {
 
     fn handle_request(&mut self, request: Request) {
         let id = request.id.clone();
-        let result = match request.method.as_str() {
-            HoverRequest::METHOD => request
-                .extract::<HoverParams>(HoverRequest::METHOD)
+        let method = request.method.clone();
+        let result = match LspRequestMethod::from(method.as_str()) {
+            LspRequestMethod::TextDocumentHover => request
+                .extract::<HoverParams>(&method)
                 .map_err(|e| format!("{e:?}"))
                 .map(|(_, params)| serde_json::to_value(self.hover(&params)).unwrap()),
-            InlayHintRequest::METHOD => request
-                .extract::<InlayHintParams>(InlayHintRequest::METHOD)
+            LspRequestMethod::TextDocumentInlayHint => request
+                .extract::<InlayHintParams>(&method)
                 .map_err(|e| format!("{e:?}"))
                 .map(|(_, params)| serde_json::to_value(self.inlay_hints(&params)).unwrap()),
-            OWNER_METHOD => request
-                .extract::<OwnerParams>(OWNER_METHOD)
+            LspRequestMethod::Custom(OWNER_METHOD) => request
+                .extract::<OwnerParams>(&method)
                 .map_err(|e| format!("{e:?}"))
                 .and_then(|(_, params)| self.owner(&params))
                 .map(|result| serde_json::to_value(result).unwrap()),
-            method => {
+            _ => {
                 self.send(Response::new_err(
                     id,
                     ErrorCode::MethodNotFound as i32,
@@ -436,13 +438,16 @@ impl<'a> Server<'a> {
         else {
             return;
         };
+        let Ok(git_dir_uri) = Uri::from_file_path(&git_dir) else {
+            return;
+        };
         let glob_pattern = if self.relative_patterns {
-            GlobPattern::Relative(RelativePattern {
-                base_uri: OneOf::Right(path_to_uri(&git_dir).parse().expect("a valid URI")),
+            GlobPattern::RelativePattern(RelativePattern {
+                base_uri: BaseUri::Uri(git_dir_uri),
                 pattern: "index".to_string(),
             })
         } else {
-            GlobPattern::String(git_dir.join("index").to_string_lossy().replace('\\', "/"))
+            GlobPattern::Pattern(git_dir.join("index").to_string_lossy().replace('\\', "/"))
         };
         let options = DidChangeWatchedFilesRegistrationOptions {
             watchers: vec![FileSystemWatcher {
@@ -452,11 +457,11 @@ impl<'a> Server<'a> {
         };
         let registration = Registration {
             id: format!("git-index:{}", git_dir.display()),
-            method: DidChangeWatchedFiles::METHOD.to_string(),
+            method: LspNotificationMethod::WorkspaceDidChangeWatchedFiles.to_string(),
             register_options: Some(serde_json::to_value(options).unwrap()),
         };
         self.send_request(
-            RegisterCapability::METHOD,
+            LspRequestMethod::ClientRegisterCapability,
             RegistrationParams {
                 registrations: vec![registration],
             },
@@ -490,13 +495,13 @@ impl<'a> Server<'a> {
             return;
         };
         let diagnostics = diagnostics(&analysis);
-        let params = PublishDiagnosticsParams::new(
-            document.uri.clone(),
+        let params = PublishDiagnosticsParams {
+            uri: document.uri.clone(),
+            version: Some(document.version),
             diagnostics,
-            Some(document.version),
-        );
+        };
         self.send(Notification::new(
-            PublishDiagnostics::METHOD.to_string(),
+            LspNotificationMethod::TextDocumentPublishDiagnostics.to_string(),
             params,
         ));
     }
@@ -514,7 +519,7 @@ impl<'a> Server<'a> {
             _ => format!("Owns no files: {}", status.note()),
         };
         Some(Hover {
-            contents: HoverContents::Markup(MarkupContent {
+            contents: Contents::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
                 value,
             }),
@@ -539,7 +544,7 @@ impl<'a> Server<'a> {
                 position: analysis
                     .index
                     .position(analysis.index.line_end(&document.text, rule.lineno)),
-                label: InlayHintLabel::String(format!(
+                label: Label::String(format!(
                     "{owned} {}",
                     if owned == 1 { "file" } else { "files" }
                 )),
@@ -554,8 +559,10 @@ impl<'a> Server<'a> {
     }
 
     fn owner(&mut self, params: &OwnerParams) -> Result<Option<OwnerResult>, String> {
-        let path = uri_to_path(&params.uri)
-            .ok_or_else(|| format!("{} isn't a file", params.uri.as_str()))?;
+        let path = params
+            .uri
+            .to_file_path()
+            .map_err(|()| format!("{} isn't a file", params.uri))?;
         let Some(root) = path.parent().and_then(find_repo_root) else {
             return Ok(None);
         };
@@ -584,7 +591,8 @@ impl<'a> Server<'a> {
         let index = LineIndex::new(&text);
         Ok(Some(OwnerResult {
             path: repo_path,
-            codeowners: path_to_uri(&absolute(&codeowners)),
+            codeowners: Uri::from_file_path(absolute(&codeowners))
+                .map_err(|()| format!("{} isn't absolute", codeowners.display()))?,
             rule: owner.map(|i| OwnerRule {
                 range: index.range(&rules[i].pattern_span),
                 pattern: rules[i].pattern.clone(),
@@ -675,12 +683,12 @@ fn diagnostics(analysis: &Analysis) -> Vec<Diagnostic> {
                     .map(|span| index.range(span))
                     .unwrap_or_default(),
                 severity: Some(if problem.error {
-                    DiagnosticSeverity::ERROR
+                    DiagnosticSeverity::Error
                 } else {
-                    DiagnosticSeverity::WARNING
+                    DiagnosticSeverity::Warning
                 }),
                 source: Some("gh-codeowners".to_string()),
-                message,
+                message: message.into(),
                 ..Default::default()
             }
         })
@@ -698,10 +706,10 @@ fn diagnostics(analysis: &Analysis) -> Vec<Diagnostic> {
         }
         diagnostics.push(Diagnostic {
             range: index.range(&rule.pattern_span),
-            severity: Some(DiagnosticSeverity::HINT),
+            severity: Some(DiagnosticSeverity::Hint),
             source: Some("gh-codeowners".to_string()),
-            message: format!("`{}` owns no files; {}", rule.pattern, status.note()),
-            tags: Some(vec![DiagnosticTag::UNNECESSARY]),
+            message: format!("`{}` owns no files; {}", rule.pattern, status.note()).into(),
+            tags: Some(vec![DiagnosticTag::Unnecessary]),
             ..Default::default()
         });
     }
