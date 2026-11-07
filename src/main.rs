@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use cli::load::load;
-use cli::{check, list, view};
+use cli::{check, list, lsp, view};
 
 mod cli;
 
@@ -41,14 +41,28 @@ enum Command {
     ///
     /// Output matches GitHub's code owners icon tooltip.
     View(view::Args),
+    /// Run a language server for CODEOWNERS files
+    ///
+    /// For editors like VS Code. It reports problems as you type, shows how
+    /// many files each rule owns, and answers `gh-codeowners/owner` requests
+    /// for the rule that owns a file.
+    Lsp(lsp::Args),
 }
 
 fn run(cli: &Cli) -> Result<ExitCode, String> {
+    if let Command::Lsp(args) = &cli.command {
+        // The server finds each document's repository itself.
+        if cli.codeowners.is_some() || cli.root.is_some() || cli.json {
+            return Err("lsp doesn't take --codeowners, --root or --json".to_string());
+        }
+        return lsp::run(args);
+    }
     let file = load(cli)?;
     match &cli.command {
         Command::Check(args) => check::run(&file, args, cli.json),
         Command::List(args) => list::run(&file, args, cli.json),
         Command::View(args) => view::run(&file, args, cli.json),
+        Command::Lsp(_) => unreachable!("handled above"),
     }
 }
 

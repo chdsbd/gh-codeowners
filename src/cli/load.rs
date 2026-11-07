@@ -78,7 +78,7 @@ pub(crate) fn display_path(file: &CodeownersFile) -> String {
 
 /// `path` relative to `root`, for messages. Inside the repository, it's a
 /// repository path, written with `/` like the paths of the files it owns.
-fn repo_display(root: &Path, path: &Path) -> String {
+pub(crate) fn repo_display(root: &Path, path: &Path) -> String {
     let path = absolute(path);
     match path.strip_prefix(absolute(root)) {
         Ok(relative) => relative

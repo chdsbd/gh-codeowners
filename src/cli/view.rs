@@ -31,7 +31,7 @@ pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<Exit
     Ok(ExitCode::SUCCESS)
 }
 
-fn repo_path(root: &Path, path: &str) -> Result<String, String> {
+pub(crate) fn repo_path(root: &Path, path: &str) -> Result<String, String> {
     let given = normalize(&absolute(Path::new(path)));
     let outside = || format!("{path} isn't in {}", root.display());
     // Either may be spelled through a symlink, like /var on macOS, so find the
