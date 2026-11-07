@@ -16,6 +16,7 @@ annotate-snippets = "0.12.17"
 anstream = "1"
 clap = { version = "4.6.7", features = ["derive"] }
 comfy-table = { version = "8.0.1", default-features = false }
+line-index = "0.1.2"
 lsp-server = "0.10.0"
 lsp-types = "0.97.0"
 regex = "1.13.1"

@@ -504,7 +504,7 @@ impl<'a> Server<'a> {
         let Some((analysis, document)) = self.analysis(key) else {
             return;
         };
-        let diagnostics = diagnostics(&analysis, &document.text);
+        let diagnostics = diagnostics(&analysis);
         let params = PublishDiagnosticsParams::new(
             document.uri.clone(),
             diagnostics,
@@ -533,7 +533,7 @@ impl<'a> Server<'a> {
                 kind: MarkupKind::Markdown,
                 value,
             }),
-            range: Some(analysis.index.range(&document.text, &rule.pattern_span)),
+            range: Some(analysis.index.range(&rule.pattern_span)),
         })
     }
 
@@ -551,10 +551,9 @@ impl<'a> Server<'a> {
             .zip(counts)
             .filter(|(rule, _)| lines.contains(&rule.lineno))
             .map(|(rule, &(owned, _))| InlayHint {
-                position: analysis.index.position(
-                    &document.text,
-                    analysis.index.line_end(&document.text, rule.lineno),
-                ),
+                position: analysis
+                    .index
+                    .position(analysis.index.line_end(&document.text, rule.lineno)),
                 label: InlayHintLabel::String(format!(
                     "{owned} {}",
                     if owned == 1 { "file" } else { "files" }
@@ -602,7 +601,7 @@ impl<'a> Server<'a> {
             path: repo_path,
             codeowners: path_to_uri(&absolute(&codeowners)),
             rule: owner.map(|i| OwnerRule {
-                range: index.range(&text, &rules[i].pattern_span),
+                range: index.range(&rules[i].pattern_span),
                 pattern: rules[i].pattern.clone(),
                 owners: rules[i].owners.clone(),
             }),
@@ -678,7 +677,7 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn diagnostics(analysis: &Analysis, text: &str) -> Vec<Diagnostic> {
+fn diagnostics(analysis: &Analysis) -> Vec<Diagnostic> {
     let index = &analysis.index;
     let mut diagnostics: Vec<Diagnostic> = analysis
         .problems
@@ -693,7 +692,7 @@ fn diagnostics(analysis: &Analysis, text: &str) -> Vec<Diagnostic> {
                 range: problem
                     .span
                     .as_ref()
-                    .map(|span| index.range(text, span))
+                    .map(|span| index.range(span))
                     .unwrap_or_default(),
                 severity: Some(if problem.error {
                     DiagnosticSeverity::ERROR
@@ -718,7 +717,7 @@ fn diagnostics(analysis: &Analysis, text: &str) -> Vec<Diagnostic> {
             continue;
         }
         diagnostics.push(Diagnostic {
-            range: index.range(text, &rule.pattern_span),
+            range: index.range(&rule.pattern_span),
             severity: Some(DiagnosticSeverity::HINT),
             source: Some("gh-codeowners".to_string()),
             message: format!("`{}` owns no files; {}", rule.pattern, status.note()),

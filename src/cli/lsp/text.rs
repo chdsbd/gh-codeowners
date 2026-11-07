@@ -4,6 +4,7 @@
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 
+use line_index::{LineCol, TextSize, WideEncoding, WideLineCol};
 use lsp_types::Position;
 
 /// How LSP positions count columns, as negotiated with the client.
@@ -13,67 +14,72 @@ pub(crate) enum Encoding {
     Utf16,
 }
 
-/// Where each line of a text starts, to convert byte offsets to positions.
+/// Converts byte offsets in a text to LSP positions and back.
 pub(crate) struct LineIndex {
-    starts: Vec<usize>,
+    index: line_index::LineIndex,
     encoding: Encoding,
 }
 
 impl LineIndex {
     pub(crate) fn new(text: &str, encoding: Encoding) -> LineIndex {
-        let starts = std::iter::once(0)
-            .chain(text.match_indices('\n').map(|(i, _)| i + 1))
-            .collect();
-        LineIndex { starts, encoding }
-    }
-
-    pub(crate) fn position(&self, text: &str, offset: usize) -> Position {
-        let line = self.starts.partition_point(|&start| start <= offset) - 1;
-        let start = self.starts[line];
-        let character = match self.encoding {
-            Encoding::Utf8 => offset - start,
-            Encoding::Utf16 => text[start..offset].encode_utf16().count(),
-        };
-        Position::new(line as u32, character as u32)
-    }
-
-    pub(crate) fn range(&self, text: &str, range: &Range<usize>) -> lsp_types::Range {
-        lsp_types::Range::new(
-            self.position(text, range.start),
-            self.position(text, range.end),
-        )
-    }
-
-    /// The byte offset of `position`, clamped to the end of its line. None
-    /// past the last line.
-    pub(crate) fn offset(&self, text: &str, position: Position) -> Option<usize> {
-        let line = position.line as usize;
-        let start = *self.starts.get(line)?;
-        let end = self.line_end(text, line);
-        let mut units = 0;
-        for (i, c) in text[start..end].char_indices() {
-            if units >= position.character as usize {
-                return Some(start + i);
-            }
-            units += match self.encoding {
-                Encoding::Utf8 => c.len_utf8(),
-                Encoding::Utf16 => c.len_utf16(),
-            };
+        LineIndex {
+            index: line_index::LineIndex::new(text),
+            encoding,
         }
-        Some(end)
+    }
+
+    /// The position of `offset`, which must be on a character boundary.
+    pub(crate) fn position(&self, offset: usize) -> Position {
+        let line_col = self.index.line_col(TextSize::new(offset as u32));
+        let (line, col) = match self.encoding {
+            Encoding::Utf8 => (line_col.line, line_col.col),
+            Encoding::Utf16 => {
+                let wide = self
+                    .index
+                    .to_wide(WideEncoding::Utf16, line_col)
+                    .expect("a column on its line");
+                (wide.line, wide.col)
+            }
+        };
+        Position::new(line, col)
+    }
+
+    pub(crate) fn range(&self, range: &Range<usize>) -> lsp_types::Range {
+        lsp_types::Range::new(self.position(range.start), self.position(range.end))
+    }
+
+    /// The byte offset of `position`, clamped to the end of its line, and
+    /// back to a character boundary. None past the last line.
+    pub(crate) fn offset(&self, text: &str, position: Position) -> Option<usize> {
+        let line_col = match self.encoding {
+            Encoding::Utf8 => LineCol {
+                line: position.line,
+                col: position.character,
+            },
+            Encoding::Utf16 => self.index.to_utf8(
+                WideEncoding::Utf16,
+                WideLineCol {
+                    line: position.line,
+                    col: position.character,
+                },
+            )?,
+        };
+        self.index.line(line_col.line)?;
+        let mut offset = u32::from(self.index.offset(line_col)?) as usize;
+        offset = offset.min(self.line_end(text, line_col.line as usize));
+        while !text.is_char_boundary(offset) {
+            offset -= 1;
+        }
+        Some(offset)
     }
 
     /// Where `line` ends, before its line ending.
     pub(crate) fn line_end(&self, text: &str, line: usize) -> usize {
-        let end = self
-            .starts
-            .get(line + 1)
-            .map_or(text.len(), |&next| next - 1);
-        if text[..end].ends_with('\r') {
-            end - 1
-        } else {
-            end
-        }
+        let range = self.index.line(line as u32).expect("a line in the text");
+        let line = &text[range.start().into()..range.end().into()];
+        let line = line.strip_suffix('\n').unwrap_or(line);
+        let line = line.strip_suffix('\r').unwrap_or(line);
+        usize::from(range.start()) + line.len()
     }
 }
 
@@ -165,8 +171,8 @@ mod tests {
         let x = text.find('x').unwrap();
         let utf16 = LineIndex::new(text, Encoding::Utf16);
         let utf8 = LineIndex::new(text, Encoding::Utf8);
-        assert_eq!(utf16.position(text, x), Position::new(1, 4));
-        assert_eq!(utf8.position(text, x), Position::new(1, 8));
+        assert_eq!(utf16.position(x), Position::new(1, 4));
+        assert_eq!(utf8.position(x), Position::new(1, 8));
         assert_eq!(utf16.offset(text, Position::new(1, 4)), Some(x));
         assert_eq!(utf8.offset(text, Position::new(1, 8)), Some(x));
     }
@@ -179,6 +185,11 @@ mod tests {
         assert_eq!(index.offset(text, Position::new(1, 99)), Some(6));
         assert_eq!(index.offset(text, Position::new(2, 0)), None);
         assert_eq!(index.line_end(text, 0), 2);
+        // Inside the surrogate pair for 🦀 is before it.
+        let text = "a🦀b";
+        let index = LineIndex::new(text, Encoding::Utf16);
+        assert_eq!(index.offset(text, Position::new(0, 2)), Some(1));
+        assert_eq!(index.offset(text, Position::new(0, 3)), Some(5));
     }
 
     #[cfg(unix)]
