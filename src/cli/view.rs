@@ -73,7 +73,7 @@ fn ownership(
     file: &CodeownersFile,
     paths: &[String],
 ) -> Result<Vec<(String, Option<CodeownersRule>)>, String> {
-    check_size(file)?;
+    check_size(&display_path(file), &file.text)?;
     let rules = parse_codeowners(&file.text);
     let paths = paths
         .iter()

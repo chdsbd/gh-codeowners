@@ -1,54 +1,30 @@
 //! Drives `gh-codeowners lsp` like an editor would, over stdin and stdout.
 
 use std::io::{BufRead, BufReader, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Child, ChildStdin, Command, Stdio};
 use std::sync::mpsc::{Receiver, channel};
 use std::time::Duration;
 
 use serde_json::{Value, json};
 
-struct Repo(PathBuf);
-
-impl Drop for Repo {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .status()
-        .unwrap();
-    assert!(status.success());
-}
-
-fn write(dir: &Path, file: &str, text: &str) {
-    let path = dir.join(file);
-    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-    std::fs::write(path, text).unwrap();
-}
+mod common;
+use common::{Repo, git};
 
 fn repo(name: &str) -> Repo {
-    let dir = std::env::temp_dir().join(format!("gh-codeowners-lsp-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    write(&dir, ".github/CODEOWNERS", "* @acme/platform\n");
-    write(&dir, "Makefile", "");
-    write(&dir, "docs/guide.md", "");
-    write(&dir, "src/main.ts", "");
-    git(&dir, &["init", "-q"]);
-    git(&dir, &["add", "."]);
+    let mut repo = Repo::new(&format!("lsp-{name}"));
+    repo.write(".github/CODEOWNERS", "* @acme/platform\n");
+    repo.write("Makefile", "");
+    repo.write("docs/guide.md", "");
+    repo.write("src/main.ts", "");
+    git(&repo.0, &["init", "-q"]);
+    git(&repo.0, &["add", "."]);
     // The real path, as an editor would have it, since the temporary
     // directory is a symlink on macOS. Windows would add a `\\?\` prefix.
-    if cfg!(windows) {
-        Repo(dir)
-    } else {
-        Repo(std::fs::canonicalize(&dir).unwrap())
+    if !cfg!(windows) {
+        repo.0 = std::fs::canonicalize(&repo.0).unwrap();
     }
+    repo
 }
 
 fn uri(path: &Path) -> String {
@@ -306,7 +282,7 @@ fn shows_how_many_files_each_rule_owns() {
 #[test]
 fn warns_about_codeowners_files_github_ignores() {
     let repo = repo("ignored");
-    write(&repo.0, "CODEOWNERS", "* @acme/x\n");
+    repo.write("CODEOWNERS", "* @acme/x\n");
     let ignored = repo.0.join("CODEOWNERS");
     let mut client = Client::start(&repo.0, json!({}));
     client.open(&ignored, "* @acme/x\n");
@@ -415,7 +391,7 @@ fn counts_again_when_gits_index_changes() {
     assert!(pattern["baseUri"].as_str().unwrap().ends_with("/.git"));
     assert_eq!(pattern["pattern"], "index");
 
-    write(&repo.0, "lib/a.rs", "");
+    repo.write("lib/a.rs", "");
     git(&repo.0, &["add", "."]);
     client.notify(
         "workspace/didChangeWatchedFiles",

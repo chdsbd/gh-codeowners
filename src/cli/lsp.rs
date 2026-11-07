@@ -23,15 +23,17 @@ use gen_lsp_types::{
     TextDocumentSyncOptions, Uri,
 };
 use gh_codeowners::codeowners::{
-    CODEOWNERS_LOCATIONS, CodeownersRule, LineProblem, MAX_CODEOWNERS_BYTES, find_codeowners,
-    find_problems, find_repo_root, ignored_codeowners, parse_codeowners, repo_root_for_codeowners,
+    CODEOWNERS_LOCATIONS, CodeownersRule, LineProblem, find_codeowners, find_problems,
+    find_repo_root, ignored_codeowners, parse_codeowners, repo_root_for_codeowners, too_big,
 };
 use gh_codeowners::report::Status;
 use gh_codeowners::{TrackedFiles, owners_of};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
 use serde::{Deserialize, Serialize};
 
-use super::load::{absolute, repo_display, rule_list};
+use super::check::unused_problems;
+use super::load::{absolute, check_size, ignored_message, repo_display, rule_list};
+use super::plural;
 use super::view::repo_path;
 use text::LineIndex;
 
@@ -224,10 +226,7 @@ impl<'a> Server<'a> {
         if self.relist_at.is_some_and(|at| at <= now) {
             self.relist_at = None;
             self.files.clear();
-            let uris: Vec<String> = self.documents.keys().cloned().collect();
-            for uri in uris {
-                self.changed(&uri);
-            }
+            self.changed(|_| true);
             self.publish_at = Some(now);
             if self.refresh_inlay_hints {
                 self.send_request(LspRequestMethod::WorkspaceInlayHintRefresh, ());
@@ -262,21 +261,20 @@ impl<'a> Server<'a> {
                 let document = params.text_document;
                 let key = document.uri.as_str().to_string();
                 let path = document.uri.to_file_path().ok();
-                if let (Some(path), false) = (&path, self.watch_files) {
-                    // Nothing says when git's index changes, so list again.
-                    self.files.remove(&repo_root_for_codeowners(path));
-                }
                 self.documents.insert(
                     key.clone(),
                     Document {
                         uri: document.uri,
-                        path,
+                        path: path.clone(),
                         text: document.text,
                         version: document.version,
                         analysis: None,
                     },
                 );
-                self.changed(&key);
+                self.changed(|d| d.uri.as_str() == key);
+                if !self.watch_files {
+                    self.relist(path.as_deref());
+                }
                 self.publish_at = Some(Instant::now());
             }
             LspNotificationMethod::TextDocumentDidChange => {
@@ -305,31 +303,15 @@ impl<'a> Server<'a> {
                     };
                 }
                 document.version = params.text_document.version;
-                self.changed(&key);
+                self.changed(|d| d.uri.as_str() == key);
                 self.publish_at = Some(Instant::now() + EDIT_DEBOUNCE);
             }
             LspNotificationMethod::TextDocumentDidSave => {
                 let Ok(params) = notification.extract::<DidSaveTextDocumentParams>(&method) else {
                     return;
                 };
-                if self.watch_files {
-                    return;
-                }
-                // Nothing says when git's index changes, so list again.
-                let path = params.text_document.uri.to_file_path().ok();
-                if let Some(root) = path.as_deref().map(repo_root_for_codeowners) {
-                    self.files.remove(&root);
-                    let uris: Vec<String> = self
-                        .documents
-                        .iter()
-                        .filter(|(_, d)| {
-                            d.path.as_deref().map(repo_root_for_codeowners).as_ref() == Some(&root)
-                        })
-                        .map(|(uri, _)| uri.clone())
-                        .collect();
-                    for uri in uris {
-                        self.changed(&uri);
-                    }
+                if !self.watch_files {
+                    self.relist(params.text_document.uri.to_file_path().ok().as_deref());
                     self.publish_at = Some(Instant::now());
                 }
             }
@@ -358,11 +340,23 @@ impl<'a> Server<'a> {
     }
 
     /// Forget what's known about a document, and publish it again.
-    fn changed(&mut self, key: &str) {
-        if let Some(document) = self.documents.get_mut(key) {
-            document.analysis = None;
-            self.unpublished.insert(key.to_string());
+    fn changed(&mut self, which: impl Fn(&Document) -> bool) {
+        for (key, document) in &mut self.documents {
+            if which(document) {
+                document.analysis = None;
+                self.unpublished.insert(key.clone());
+            }
         }
+    }
+
+    /// List the files in the repository of the CODEOWNERS file at `path`
+    /// again, since nothing says when its git index changes.
+    fn relist(&mut self, path: Option<&Path>) {
+        let Some(root) = path.map(repo_root_for_codeowners) else {
+            return;
+        };
+        self.files.remove(&root);
+        self.changed(|d| d.path.as_deref().map(repo_root_for_codeowners).as_ref() == Some(&root));
     }
 
     fn handle_request(&mut self, request: Request) {
@@ -473,9 +467,9 @@ impl<'a> Server<'a> {
         let document = self.documents.get(key)?;
         if document.analysis.is_none() {
             let root = document.path.as_deref().map(repo_root_for_codeowners);
-            let too_big = document.text.len() as u64 > MAX_CODEOWNERS_BYTES;
+            // GitHub ignores the file, so counts would mislead.
             let files = match &root {
-                Some(root) if !too_big => self.files(root),
+                Some(root) if !too_big(&document.text) => self.files(root),
                 _ => None,
             };
             let document = self.documents.get_mut(key)?;
@@ -515,7 +509,7 @@ impl<'a> Server<'a> {
             rule.pattern_span.contains(&offset) || rule.pattern_span.end == offset
         })?;
         let value = match status {
-            Status::Active => format!("Owns {owned} {}", if owned == 1 { "file" } else { "files" }),
+            Status::Active => format!("Owns {}", plural(owned, "file")),
             _ => format!("Owns no files: {}", status.note()),
         };
         Some(Hover {
@@ -544,10 +538,7 @@ impl<'a> Server<'a> {
                 position: analysis
                     .index
                     .position(analysis.index.line_end(&document.text, rule.lineno)),
-                label: Label::String(format!(
-                    "{owned} {}",
-                    if owned == 1 { "file" } else { "files" }
-                )),
+                label: Label::String(plural(owned, "file")),
                 kind: None,
                 text_edits: None,
                 tooltip: None,
@@ -579,12 +570,7 @@ impl<'a> Server<'a> {
             None => std::fs::read_to_string(&codeowners)
                 .map_err(|e| format!("{}: {e}", codeowners.display()))?,
         };
-        if text.len() as u64 > MAX_CODEOWNERS_BYTES {
-            return Err(format!(
-                "{} is over GitHub's limit of {MAX_CODEOWNERS_BYTES} bytes, so GitHub ignores it",
-                codeowners.display()
-            ));
-        }
+        check_size(&repo_display(&root, &codeowners), &text)?;
         let repo_path = repo_path(&root, &path.to_string_lossy())?;
         let rules = parse_codeowners(&text);
         let owner = owners_of(&rule_list(&rules), &[&repo_path])[0];
@@ -615,7 +601,7 @@ fn analyze(text: &str, location: Option<(&Path, &Path)>, files: Option<&TrackedF
             .count(&rule_list(&rules))
             .rules
             .into_iter()
-            .map(|c| (c.owned, Status::new(c.owned, c.matches_any)))
+            .map(|c| (c.owned, Status::new(&c)))
             .collect()
     });
     Analysis {
@@ -637,11 +623,7 @@ fn location_problem(text: &str, path: &Path, root: &Path) -> Option<LineProblem>
     }
     let used = find_codeowners(root)?;
     let message = if same_file(&used, path) {
-        let ignored = ignored_codeowners(root, text)?;
-        format!(
-            "this file has no rules, but GitHub uses it instead of {}, so no file has an owner",
-            repo_display(root, &ignored)
-        )
+        ignored_message("this file", root, &ignored_codeowners(root, text)?)
     } else {
         format!(
             "GitHub uses {} instead of this file, so none of its rules apply",
@@ -666,52 +648,46 @@ fn same_file(a: &Path, b: &Path) -> bool {
 }
 
 fn diagnostics(analysis: &Analysis) -> Vec<Diagnostic> {
-    let index = &analysis.index;
-    let mut diagnostics: Vec<Diagnostic> = analysis
+    let diagnostic = |problem: &LineProblem| {
+        // `check` shows the label under the word with the problem.
+        let message = match problem.title_and_label() {
+            (title, Some(label)) => format!("{title}; {label}"),
+            (title, None) => title.to_string(),
+        };
+        Diagnostic {
+            range: problem
+                .span
+                .as_ref()
+                .map(|span| analysis.index.range(span))
+                .unwrap_or_default(),
+            severity: Some(if problem.error {
+                DiagnosticSeverity::Error
+            } else {
+                DiagnosticSeverity::Warning
+            }),
+            source: Some("gh-codeowners".to_string()),
+            message: message.into(),
+            ..Default::default()
+        }
+    };
+    let counts = analysis.counts.iter().flatten();
+    let rules = analysis
+        .rules
+        .iter()
+        .zip(counts)
+        .map(|(rule, &(_, status))| (rule, status));
+    let unused = unused_problems(rules, &analysis.problems)
+        .into_iter()
+        .map(|problem| Diagnostic {
+            // Faded, rather than an error, while editing.
+            severity: Some(DiagnosticSeverity::Hint),
+            tags: Some(vec![DiagnosticTag::Unnecessary]),
+            ..diagnostic(&problem)
+        });
+    analysis
         .problems
         .iter()
-        .map(|problem| {
-            // Like `check`, which shows the part after " - " as a label.
-            let message = match problem.message.split_once(" - ") {
-                Some((title, label)) => format!("{title}; {label}"),
-                None => problem.message.clone(),
-            };
-            Diagnostic {
-                range: problem
-                    .span
-                    .as_ref()
-                    .map(|span| index.range(span))
-                    .unwrap_or_default(),
-                severity: Some(if problem.error {
-                    DiagnosticSeverity::Error
-                } else {
-                    DiagnosticSeverity::Warning
-                }),
-                source: Some("gh-codeowners".to_string()),
-                message: message.into(),
-                ..Default::default()
-            }
-        })
-        .collect();
-    let counts = analysis.counts.iter().flatten();
-    for (rule, &(_, status)) in analysis.rules.iter().zip(counts) {
-        // Don't say a line owns nothing when there's already a problem with it.
-        if status == Status::Active
-            || analysis
-                .problems
-                .iter()
-                .any(|p| p.lineno == Some(rule.lineno))
-        {
-            continue;
-        }
-        diagnostics.push(Diagnostic {
-            range: index.range(&rule.pattern_span),
-            severity: Some(DiagnosticSeverity::Hint),
-            source: Some("gh-codeowners".to_string()),
-            message: format!("`{}` owns no files; {}", rule.pattern, status.note()).into(),
-            tags: Some(vec![DiagnosticTag::Unnecessary]),
-            ..Default::default()
-        });
-    }
-    diagnostics
+        .map(diagnostic)
+        .chain(unused)
+        .collect()
 }

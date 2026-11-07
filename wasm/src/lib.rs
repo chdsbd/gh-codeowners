@@ -73,7 +73,7 @@ pub unsafe extern "C" fn count_files(
             rules: rules
                 .iter()
                 .zip(&counts.rules)
-                .map(|(rule, c)| rule_json(rule, c.owned, Status::new(c.owned, c.matches_any)))
+                .map(|(rule, c)| rule_json(rule, c.owned, Status::new(c)))
                 .collect(),
         })
     }))

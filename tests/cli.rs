@@ -1,35 +1,14 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use insta::assert_snapshot;
 
-struct Repo(PathBuf);
-
-impl Drop for Repo {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-fn git(dir: &Path, args: &[&str]) {
-    let status = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .status()
-        .unwrap();
-    assert!(status.success());
-}
+mod common;
+use common::{Repo, git};
 
 fn repo(name: &str) -> Repo {
-    let dir = std::env::temp_dir().join(format!("gh-codeowners-cli-{name}-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&dir);
-    let write = |file: &str, text: &str| {
-        let path = dir.join(file);
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(path, text).unwrap();
-    };
+    let repo = Repo::new(&format!("cli-{name}"));
+    let write = |file: &str, text: &str| repo.write(file, text);
     write(
         ".github/CODEOWNERS",
         "*           @acme/platform\n/docs/      @acme/docs\n*.md        @acme/writers\n/missing/   @acme/nobody",
@@ -39,11 +18,11 @@ fn repo(name: &str) -> Repo {
     write("src/main.ts", "");
     write("build/out.js", "");
     write(".gitignore", "build/\n");
-    git(&dir, &["init", "-q"]);
-    git(&dir, &["add", "."]);
+    git(&repo.0, &["init", "-q"]);
+    git(&repo.0, &["add", "."]);
     // Only files in git's index count.
     write("notes.md", "");
-    Repo(dir)
+    repo
 }
 
 fn run(repo: &Repo, args: &[&str]) -> (i32, String, String) {
@@ -127,20 +106,17 @@ fn json_unused_lists_only_rules_that_own_nothing() {
 
 #[test]
 fn exits_with_2_when_theres_no_codeowners() {
-    let empty =
-        std::env::temp_dir().join(format!("gh-codeowners-cli-empty-{}", std::process::id()));
-    std::fs::create_dir_all(&empty).unwrap();
+    let empty = Repo::new("cli-empty");
     let (status, _, stderr) = run(
         &repo("missing"),
-        &["list", "--root", empty.to_str().unwrap()],
+        &["list", "--root", empty.0.to_str().unwrap()],
     );
-    std::fs::remove_dir_all(&empty).unwrap();
     assert_eq!(status, 2);
     assert_eq!(
         stderr,
         format!(
             "gh-codeowners: No CODEOWNERS file found in {}\n",
-            empty.display()
+            empty.0.display()
         )
     );
 }

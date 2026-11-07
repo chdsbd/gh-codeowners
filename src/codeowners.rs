@@ -64,6 +64,11 @@ pub fn repo_root_for_codeowners(codeowners: &Path) -> PathBuf {
 /// 3 MB", but it loads files of exactly 3 MiB.
 pub const MAX_CODEOWNERS_BYTES: u64 = 3 * 1024 * 1024;
 
+/// Whether GitHub ignores CODEOWNERS `text` for being too big.
+pub fn too_big(text: &str) -> bool {
+    text.len() as u64 > MAX_CODEOWNERS_BYTES
+}
+
 // An owner GitHub accepts: @user, @org/team, or an email address with a dot
 // in its domain. Otherwise GitHub ignores the line.
 //
@@ -168,9 +173,21 @@ pub struct LineProblem {
     pub message: String,
 }
 
+impl LineProblem {
+    /// The message's title, and the part after " - ", which labels the word
+    /// with the problem. A pattern or owner can't contain " - ", since it
+    /// would need an unescaped space.
+    pub fn title_and_label(&self) -> (&str, Option<&str>) {
+        match self.message.split_once(" - ") {
+            Some((title, label)) => (title, Some(label)),
+            None => (&self.message, None),
+        }
+    }
+}
+
 pub fn find_problems(text: &str) -> Vec<LineProblem> {
     let mut problems = Vec::new();
-    if text.len() as u64 > MAX_CODEOWNERS_BYTES {
+    if too_big(text) {
         problems.push(LineProblem {
             lineno: None,
             span: None,
