@@ -2,7 +2,7 @@
 
 ## Releasing
 
-Bump the version in `Cargo.toml`, then push a matching tag:
+Bump the version in `Cargo.toml` and add a section for it to `CHANGELOG.md`, which CI checks with `s/check-version`. Then push a matching tag:
 
 ```
 git tag v0.1.0
