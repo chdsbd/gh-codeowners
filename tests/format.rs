@@ -1,5 +1,6 @@
 use gh_codeowners::codeowners::{find_problems, parse_codeowners};
 use gh_codeowners::format::format;
+use insta::{assert_snapshot, glob};
 use proptest::prelude::*;
 use proptest::sample::select;
 
@@ -29,6 +30,22 @@ fn text() -> impl Strategy<Value = String> {
     ]);
     let line = prop::collection::vec(piece, 0..8).prop_map(|pieces| pieces.concat());
     prop::collection::vec(line, 0..8).prop_map(|lines| lines.join("\n"))
+}
+
+/// Each file in tests/format, formatted. Review changes with
+/// `cargo insta review`.
+#[test]
+fn formats_fixtures() {
+    glob!("format/*.codeowners", |path| {
+        let text = std::fs::read_to_string(path).unwrap();
+        let formatted = format(&text);
+        assert_eq!(
+            format(&formatted),
+            formatted,
+            "formatting twice changes nothing"
+        );
+        assert_snapshot!(formatted);
+    });
 }
 
 fn without_whitespace(line: &str) -> String {

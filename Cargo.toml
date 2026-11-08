@@ -37,6 +37,6 @@ lto = true
 codegen-units = 1
 
 [dev-dependencies]
-insta = "1.49.0"
+insta = { version = "1.49.0", features = ["glob"] }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 tempfile = "3.27.0"

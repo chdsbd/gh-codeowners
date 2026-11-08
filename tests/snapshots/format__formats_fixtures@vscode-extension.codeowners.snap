@@ -1,0 +1,14 @@
+---
+source: tests/format.rs
+expression: formatted
+input_file: tests/format/vscode-extension.codeowners
+---
+*                                @foo
+/some-path                       @bar
+another-path/but-loooooooooonger @baz
+
+# a comment
+
+# an indented comment
+/docs/**/*.md @foo @bar
+# /docs/**/*.rst                     @foo @bar

@@ -100,11 +100,23 @@ fn parse_line(raw: &str) -> Line<'_> {
 
 #[cfg(test)]
 mod tests {
+    use insta::assert_snapshot;
+
     use super::*;
+
+    // Snapshots show alignment as it looks. Review changes with
+    // `cargo insta review`. Whitespace you can't see, like line endings,
+    // is checked with assert_eq! instead.
+
+    /// `text` formatted, without the newline that starts it, so the text
+    /// can start on the line after its quote.
+    fn fmt(text: &str) -> String {
+        format(text.strip_prefix('\n').unwrap_or(text))
+    }
 
     #[test]
     fn aligns_owners_and_comments_in_each_section() {
-        let text = "\
+        assert_snapshot!(fmt(r"
   # Frontend
 /web/      @acme/web   # React app
 /web/legacy/ @acme/web     @old-team
@@ -113,36 +125,41 @@ mod tests {
 # Backend
 *.go @acme/go
 /api/ @acme/api # REST
-";
-        assert_eq!(
-            format(text),
-            "\
-# Frontend
-/web/        @acme/web # React app
-/web/legacy/ @acme/web @old-team
-/docs/       docs@example.com
+"), @"
+        # Frontend
+        /web/        @acme/web # React app
+        /web/legacy/ @acme/web @old-team
+        /docs/       docs@example.com
 
-# Backend
-*.go  @acme/go
-/api/ @acme/api # REST
-"
-        );
+        # Backend
+        *.go  @acme/go
+        /api/ @acme/api # REST
+        ");
     }
 
     #[test]
     fn a_rule_without_owners_stays_in_its_run() {
         // Its pattern is the longest, but it doesn't move the others.
-        let text = "/a/ @x # one\n/a/vendor/longest/\n/longer/ @y # two\n";
-        assert_eq!(
-            format(text),
-            "/a/      @x # one\n/a/vendor/longest/\n/longer/ @y # two\n"
-        );
+        assert_snapshot!(fmt(r"
+/a/ @x # one
+/a/vendor/longest/
+/longer/ @y # two
+"), @"
+        /a/      @x # one
+        /a/vendor/longest/
+        /longer/ @y # two
+        ");
     }
 
     #[test]
     fn lines_up_comments_after_rules_without_owners() {
-        let text = "/a/ @x # one\n/vendor/ # two\n";
-        assert_eq!(format(text), "/a/ @x   # one\n/vendor/ # two\n");
+        assert_snapshot!(fmt(r"
+/a/ @x # one
+/vendor/ # two
+"), @"
+        /a/ @x   # one
+        /vendor/ # two
+        ");
     }
 
     #[test]
@@ -153,8 +170,25 @@ mod tests {
 
     #[test]
     fn keeps_escapes_and_comments_inside_words() {
-        let text = "foo/b\\ ar.py   @x\n\\#notes   @y#z\n";
-        assert_eq!(format(text), "foo/b\\ ar.py @x\n\\#notes      @y #z\n");
+        assert_snapshot!(fmt(r"
+foo/b\ ar.py   @x
+\#notes   @y#z
+"), @r"
+        foo/b\ ar.py @x
+        \#notes      @y #z
+        ");
+    }
+
+    #[test]
+    fn counts_characters_not_bytes() {
+        // é is 2 bytes.
+        assert_snapshot!(fmt(r"
+/é/ @x
+/ab/ @y
+"), @"
+        /é/  @x
+        /ab/ @y
+        ");
     }
 
     #[test]
@@ -167,11 +201,5 @@ mod tests {
     #[test]
     fn keeps_a_line_whose_last_word_ends_with_an_escaped_cr() {
         assert_eq!(format("x\\\r  \n"), "x\\\r  \n");
-    }
-
-    #[test]
-    fn counts_characters_not_bytes() {
-        // é is 2 bytes.
-        assert_eq!(format("/é/ @x\n/ab/ @y\n"), "/é/  @x\n/ab/ @y\n");
     }
 }
