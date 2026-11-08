@@ -415,6 +415,33 @@ fn finds_the_rule_that_owns_a_file_with_unsaved_changes() {
 }
 
 #[test]
+fn formats_each_line_that_changes() {
+    let repo = repo("format");
+    let codeowners = repo.0.join(".github/CODEOWNERS");
+    let mut client = Client::start(&repo.0, json!({}));
+    client.open(
+        &codeowners,
+        "# Owners\r\n*  @acme/x\r\n/docs/ @acme/docs\r\n",
+    );
+    let edits = client.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri(&codeowners) },
+            "options": { "tabSize": 2, "insertSpaces": true },
+        }),
+    );
+    // Not the comment, and not the line endings.
+    assert_eq!(
+        edits,
+        json!([{
+            "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 10 } },
+            "newText": "*      @acme/x",
+        }])
+    );
+    assert_eq!(client.shutdown(), 0);
+}
+
+#[test]
 fn exits_with_1_without_a_shutdown() {
     let repo = repo("exit");
     let mut client = Client::start(&repo.0, json!({}));

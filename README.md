@@ -39,6 +39,7 @@ Commands:
   check  Check CODEOWNERS for problems
   list   List each rule and how many files it owns
   view   Show the rule that owns each path
+  fmt    Format CODEOWNERS, like `terraform fmt`
   lsp    Run a language server for CODEOWNERS files
   help   Print this message or the help of the given subcommand(s)
 
@@ -105,6 +106,27 @@ error: `/apps/web/` owns no files
 8 | /apps/web/ @acme/web
   | ^^^^^^^^^^ no files match
 ```
+
+### Format CODEOWNERS
+
+```
+gh codeowners fmt
+```
+
+Like `terraform fmt`, it changes only whitespace and has no options. Lines have no indentation or extra spaces, and the owners of consecutive rules line up one space after the longest pattern, as do their comments. A blank line, a comment or a rule with no owners starts a new group, so each section lines up on its own.
+
+```
+# Frontend
+/web/        @acme/web # React app
+/web/legacy/ @acme/web @acme/legacy
+/docs/       docs@example.com
+
+# Backend
+*.go  @acme/go
+/api/ @acme/api # REST
+```
+
+It prints the file's path if it changed it. In CI, `gh codeowners fmt --check` exits with 1 if the file isn't formatted, without changing it. With `--codeowners -`, it formats stdin to stdout. The language server formats too.
 
 ### Editor support
 

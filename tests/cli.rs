@@ -578,3 +578,48 @@ fn warns_when_github_ignores_rules_for_an_empty_codeowners() {
     let (_, _, stderr) = run(&repo, &["list", "--codeowners", ".github/CODEOWNERS"]);
     assert_eq!(stderr, "");
 }
+
+#[test]
+fn fmt_formats_codeowners_in_place() {
+    let repo = repo("fmt");
+    let codeowners = repo.path().join(".github/CODEOWNERS");
+    std::fs::write(
+        &codeowners,
+        "  # Docs\n/docs/   @acme/docs   # guides\n*.md @acme/writers\n",
+    )
+    .unwrap();
+    // --check reports the file without changing it.
+    let (status, stdout, stderr) = run(&repo, &["fmt", "--check"]);
+    assert_eq!(
+        (status, stdout.as_str(), stderr.as_str()),
+        (1, ".github/CODEOWNERS\n", "")
+    );
+    let (status, stdout, stderr) = run(&repo, &["fmt"]);
+    assert_eq!(
+        (status, stdout.as_str(), stderr.as_str()),
+        (0, ".github/CODEOWNERS\n", "")
+    );
+    assert_snapshot!(std::fs::read_to_string(&codeowners).unwrap(), @r"
+    # Docs
+    /docs/ @acme/docs # guides
+    *.md   @acme/writers
+    ");
+    // Nothing more to do.
+    assert_eq!(run(&repo, &["fmt"]), (0, String::new(), String::new()));
+    assert_eq!(
+        run(&repo, &["fmt", "--check"]),
+        (0, String::new(), String::new())
+    );
+}
+
+#[test]
+fn fmt_formats_stdin_to_stdout() {
+    let repo = repo("fmt-stdin");
+    let (status, stdout, _) =
+        run_with_stdin(&repo, &["fmt", "--codeowners", "-"], "*   @a\n/docs/ @b");
+    assert_eq!((status, stdout.as_str()), (0, "*      @a\n/docs/ @b"));
+    let (status, stdout, _) =
+        run_with_stdin(&repo, &["fmt", "--check", "--codeowners", "-"], "*   @a\n");
+    assert_eq!((status, stdout.as_str()), (1, ""));
+    assert_eq!(run(&repo, &["fmt", "--json"]).0, 2);
+}
