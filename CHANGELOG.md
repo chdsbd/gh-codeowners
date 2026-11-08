@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `--json` is now an option of `check`, `list` and `view`, the commands that print JSON, so it goes after the command, like `list --json`. It's no longer accepted before the command or by `fmt` and `lsp`.
+- Move `--json` from global option to commands that support it:  `check`, `list` and `view` (#40).
 
 ## 0.2.0 - 2026-11-08
 
