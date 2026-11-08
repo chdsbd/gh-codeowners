@@ -131,24 +131,24 @@ How well gh-codeowners, and others match GitHub's behavior. Count speed is the t
 
 Where they differ:
 
-| GitHub behavior | gh-codeowners | sbdchd | hmarr | snyk | codeowners-rs |
-|---|---|---|---|---|---|
-| `!secrets` owns files named `secrets`, not directories | ✓ | ✗ | ✗ | ✗ | ✗ |
-| `!important/notes.md` owns the file with the `!` | ✓ | ✓ | ✗ | ✗ | ✓ |
-| `?` matches one byte, not one character | ✓ | ✗ | ✗ | ✗ | ✗ |
-| `**/` and `/**/` own every file | ✓ | ✗ | ✗ | ✗ | ✓ |
-| `***` skips the line | ✓ | ✗ | ✓ | ✗ | ✗ |
-| `{a,b}` matches literally | ✓ | ✓ | ✗ | ✓ | ✓ |
-| Unescaped `[` or `]` skips the line | ✓ | ✓ | ✗ | ✓ | ✗ |
-| `\[draft\]*` without a slash matches nothing | ✓ | ✗ | ✗ | ✗ | ✗ |
-| Unpaired escaped brackets match nothing | ✓ | ✗ | ✗ | ✗ | ✗ |
-| Escaping anything but space, tab, `#`, `[`, `]` or `\` skips the line | ✓ | ✗ | ✗ | ✗ | ✗ |
-| `My\ Documents/` matches the space | ✓ | ✓ | ✓ | ✗ | ✓ |
-| `win\\path` matches a backslash | ✓ | ✓ | ✓ | ✓ | ✗ |
-| Unescaped `#` starts a comment mid-pattern | ✓ | ✗ | ✓ | ✓ | ✓ |
-| `\#notes` matches `#notes` | ✓ | ✓ | ✗ | ✗ | ✓ |
-| Patterns are case-sensitive | ✓ | ✓ | ✓ | ✗ | ✓ |
-| Non-ASCII patterns like `日本語/` | ✓ | ✓ | ✗ | ✓ | ✓ |
+| GitHub behavior | gh-codeowners | sbdchd | hmarr | codeowners-tool | deadzone | snyk | codeowners-rs | jjmschofield | softprops | codeowners-audit | validator | beaugunderson |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| `!secrets` owns files named `secrets`, not directories | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `!important/notes.md` owns the file with the `!` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✓ | ✗ | ✓ | ✗ |
+| `?` matches one byte, not one character | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `**/` and `/**/` own every file | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✓ | ✓ | ✓ | ✗ |
+| `***` skips the line | ✓ | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ | ✓ |
+| `{a,b}` matches literally | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ |
+| Unescaped `[` or `]` skips the line | ✓ | ✓ | ✗ | ✗ | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | ✗ | ✗ |
+| `\[draft\]*` without a slash matches nothing | ✓ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ | ✓ |
+| Unpaired escaped brackets match nothing | ✓ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ |
+| Escaping anything but space, tab, `#`, `[`, `]` or `\` skips the line | ✓ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✗ | ✓ | ✗ | ✗ | ✗ |
+| `My\ Documents/` matches the space | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ | ✓ | ✗ | ✗ |
+| `win\\path` matches a backslash | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ | ✓ | ✗ | ✗ | ✗ | ✓ |
+| Unescaped `#` starts a comment mid-pattern | ✓ | ✗ | ✓ | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ | ✓ | ✗ | ✗ |
+| `\#notes` matches `#notes` | ✓ | ✓ | ✗ | ✗ | ✗ | ✗ | ✓ | ✓ | ✗ | ✗ | ✗ | ✓ |
+| Patterns are case-sensitive | ✓ | ✓ | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ | ✗ | ✓ | ✓ | ✗ |
+| Non-ASCII patterns like `日本語/` | ✓ | ✓ | ✗ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 
 
 See https://github.com/chdsbd/codeowners-comparison for the full comparison.
