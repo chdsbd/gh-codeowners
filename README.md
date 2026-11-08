@@ -112,7 +112,9 @@ Install [VS Code GitHub Code Owners](https://marketplace.visualstudio.com/items?
 
 ## Comparison
 
-How well gh-codeowners, and others match GitHub's behavior. Count speed is the time to check every file in a large open-source repository (773 rules, 22,256 files), with each tool doing its closest equivalent; a dash means it wasn't timed.
+How well gh-codeowners, and others match GitHub's behavior.
+
+Count speed is the time to check every file in getsentry/sentry.
 
 | Library | Language | Agrees with GitHub | Count speed |
 |---|---|---|---|
