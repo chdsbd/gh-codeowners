@@ -1,15 +1,10 @@
 # gh-codeowners
 
-A CLI for [GitHub CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
+A CLI for [GitHub CODEOWNERS](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners) files.
 
 - Find a file's owner.
 - Count the files owned by a rule.
 - Find errors in your CODEOWNERS file.
-
-## TODOs
-
-- [ ] `--online` flag for querying GitHub api to validate teams have write access to repository.
-- [ ] `--fs` support count files in disk instead of git index
 
 ## Install
 
@@ -17,14 +12,17 @@ As a [GitHub CLI](https://cli.github.com) extension (recommended):
 
 ```
 gh extension install chdsbd/gh-codeowners
-
-gh codeowners list
-gh codeowners list --unused
-gh codeowners view src/app.ts
-gh codeowners check
 ```
 
-Or with Cargo, which installs the `gh-codeowners` command:
+## Update
+
+```
+gh extension upgrade codeowners
+```
+
+## Install with Cargo
+
+Cargo installs the `gh-codeowners` command:
 
 ```
 cargo install --git https://github.com/chdsbd/gh-codeowners
@@ -33,19 +31,23 @@ cargo install --git https://github.com/chdsbd/gh-codeowners
 ## Usage
 
 ```
-gh codeowners <command> [flags]
+Work with GitHub CODEOWNERS files
 
-  check   Check CODEOWNERS for lines GitHub rejects, and with --unused, rules
-          that own no files. Exits with status 1 if there are errors.
-  list    List each rule with how many files it owns
-  view    Show the rule that owns each path
-  lsp     Run a language server for CODEOWNERS files
+Usage: gh codeowners [OPTIONS] <COMMAND>
 
-  --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one
-                       GitHub would use)
-  --root <dir>         Repository root (default: the git repository
-                       containing the current directory)
-  --json               Output JSON
+Commands:
+  check  Check CODEOWNERS for problems
+  list   List each rule and how many files it owns
+  view   Show the rule that owns each path
+  lsp    Run a language server for CODEOWNERS files
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+      --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one GitHub would use)
+      --root <dir>         Repository root (default: the repository containing the current directory)
+      --json               Output JSON
+  -h, --help               Print help
+  -V, --version            Print version
 ```
 
 ### Find a file's owner
@@ -55,6 +57,23 @@ gh codeowners view app.ts components/button.tsx
 
 src/app.ts: @acme/web, from .github/CODEOWNERS:5 /src/
 src/components/button.tsx: @acme/design, from .github/CODEOWNERS:6 /src/components/
+```
+
+### List rules and how many files they own
+
+```
+gh codeowners list
+
+.github/CODEOWNERS: 7 rules, 22 files, 3 files with no owner, 2 rules owning no files
+
+line  files  pattern
+   4      1  /README.md
+   5      6  /src/
+   6      7  /src/components/
+   7      0  /app/[id]/        no files match
+   8      4  /docs/
+   9      1  !secrets
+  10      0  /legacy/          no files match
 ```
 
 ### Check CODEOWNERS for errors
@@ -75,39 +94,29 @@ warning: `!` doesn't negate a pattern on GitHub
   | ^^^^^^^^ this matches files named like the rest of the pattern, but not directories
 ```
 
-### Fail CI on errors or dead rules
+### Check CODEOWNERS for errors or unused rules
 
 ```
 gh codeowners check --unused
+
+error: `/apps/web/` owns no files
+ --> .github/CODEOWNERS:8:1
+  |
+8 | /apps/web/ @acme/web
+  | ^^^^^^^^^^ no files match
 ```
 
 ### Editor support
 
-`gh codeowners lsp` is a language server over stdin and stdout, used by the [VS Code extension](https://github.com/chdsbd/vscode-github-code-owners). It checks CODEOWNERS files as you type, and shows how many files each rule owns, as inlay hints and on hover. Rules that own no files are reported as unnecessary.
-
-It counts files from git's index, and lists them again when the client reports `.git/index` changed, which it asks for with `client/registerCapability`. Clients without dynamic file watching get fresh counts when a CODEOWNERS file is opened or saved.
-
-A `gh-codeowners/owner` request finds the rule that owns a file, including unsaved changes to its CODEOWNERS file:
-
-```
---> {"uri": "file:///repo/docs/guide.md"}
-<-- {"path": "docs/guide.md", "codeowners": "file:///repo/.github/CODEOWNERS",
-     "rule": {"range": {...}, "pattern": "/docs/", "owners": ["@acme/docs"]}}
-```
-
-The result is `null` outside a repository with a CODEOWNERS file, and `rule` is `null` when no rule matches.
-
-## Matching
-
-See [`SPECIFICATION.md`](SPECIFICATION.md) for matching behavior.
+Install [VS Code GitHub Code Owners](https://marketplace.visualstudio.com/items?itemName=chdsbd.github-code-owners) for editor support.
 
 ## Comparison
 
-How often each library matches the same files as GitHub, across the 4,157 CODEOWNERS lines and paths recorded from GitHub in [codeowners-comparison](https://github.com/chdsbd/codeowners-comparison):
+How well gh-codeowners, and others match GitHub's behavior.
 
 | Library | Language | Agrees with GitHub |
 |---|---|---|
-| gh-codeowners | Rust | 4157/4157 |
+| gh-codeowners (this repository) | Rust | 4157/4157 |
 | [sbdchd/codeowners](https://github.com/sbdchd/codeowners) | Python | 4039/4157 |
 | [hmarr/codeowners](https://github.com/hmarr/codeowners) | Go | 4021/4157 |
 | [snyk/github-codeowners](https://github.com/snyk/github-codeowners), via the [chdsbd/github-codeowners](https://github.com/chdsbd/github-codeowners) fork | Node | 4005/4157 |
@@ -134,3 +143,7 @@ Where they differ:
 | Patterns are case-sensitive | ✓ | ✓ | ✓ | ✗ | ✓ |
 | Non-ASCII patterns like `日本語/` | ✓ | ✓ | ✗ | ✓ | ✓ |
 
+
+See https://github.com/chdsbd/codeowners-comparison for the full comparison.
+
+See [`SPECIFICATION.md`](SPECIFICATION.md) for matching behavior.
