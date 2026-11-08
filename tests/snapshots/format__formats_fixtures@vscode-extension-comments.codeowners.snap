@@ -1,0 +1,8 @@
+---
+source: tests/format.rs
+expression: formatted
+input_file: tests/format/vscode-extension-comments.codeowners
+---
+# This file should never change due to grammar
+
+# This is also true for indented comment and blank lines

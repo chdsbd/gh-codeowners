@@ -4,6 +4,7 @@
 
 pub mod codeowners;
 pub mod counter;
+pub mod format;
 pub mod pattern;
 pub mod report;
 

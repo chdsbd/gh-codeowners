@@ -14,12 +14,15 @@ use super::load::{CodeownersFile, absolute, display_path, print_stdout, warn_if_
 pub(crate) struct Args {
     #[arg(required = true, value_name = "path")]
     paths: Vec<String>,
+    /// Output JSON
+    #[arg(long)]
+    json: bool,
 }
 
-pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<ExitCode, String> {
+pub(crate) fn run(file: &CodeownersFile, args: &Args) -> Result<ExitCode, String> {
     warn_if_ignored(file);
     let files = ownership(file, &args.paths)?;
-    print_stdout(&if json {
+    print_stdout(&if args.json {
         to_json(
             &files
                 .iter()

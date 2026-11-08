@@ -39,13 +39,13 @@ Commands:
   check  Check CODEOWNERS for problems
   list   List each rule and how many files it owns
   view   Show the rule that owns each path
+  fmt    Format CODEOWNERS, like `terraform fmt`
   lsp    Run a language server for CODEOWNERS files
   help   Print this message or the help of the given subcommand(s)
 
 Options:
       --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one GitHub would use)
       --root <dir>         Repository root (default: the repository containing the current directory)
-      --json               Output JSON
   -h, --help               Print help
   -V, --version            Print version
 ```
@@ -105,6 +105,30 @@ error: `/apps/web/` owns no files
 8 | /apps/web/ @acme/web
   | ^^^^^^^^^^ no files match
 ```
+
+### Format CODEOWNERS
+
+```
+gh codeowners fmt
+```
+
+Formats CODEOWNERS based on `terraform fmt`'s behavior.
+
+Each group is formatted.
+
+```
+# Frontend
+/web/        @acme/web # React app
+/web/legacy/ @acme/web @acme/legacy
+/web/vendor/
+/docs/       docs@example.com
+
+# Backend
+*.go  @acme/go
+/api/ @acme/api # REST
+```
+
+Use `gh codeowners fmt --check` to error if the file isn't formatted.
 
 ### Editor support
 

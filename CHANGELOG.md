@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 0.3.0 - 2026-11-09
+
+### Added
+
+- Add `fmt` to format CODEOWNERS like `terraform fmt` (#40).
+- Add formatting to the language server (#40).
+
+### Changed
+
+- Move `--json` from global option to commands that support it:  `check`, `list` and `view` (#40).
+
 ## 0.2.0 - 2026-11-08
 
 ### Added

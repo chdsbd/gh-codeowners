@@ -104,16 +104,22 @@ static OWNER: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// A word in a CODEOWNERS file, as written, with escapes.
-struct Word<'a> {
-    text: &'a str,
+pub(crate) struct Word<'a> {
+    pub(crate) text: &'a str,
     // Byte range in the CODEOWNERS file.
-    span: Range<usize>,
+    pub(crate) span: Range<usize>,
 }
 
-/// Split on whitespace up to a comment. Like on GitHub, an unescaped `#`
-/// starts a comment anywhere, even inside a pattern, and an escaped space
-/// is part of a pattern. `offset` is where `line` starts in the file.
 fn split_words(line: &str, offset: usize) -> Vec<Word<'_>> {
+    split_line(line, offset).0
+}
+
+/// Split on whitespace up to a comment, and return the words and the
+/// comment, from its `#` to the end of the line. Like on GitHub, an
+/// unescaped `#` starts a comment anywhere, even inside a pattern, and an
+/// escaped space is part of a pattern. `offset` is where `line` starts in
+/// the file.
+pub(crate) fn split_line(line: &str, offset: usize) -> (Vec<Word<'_>>, Option<&str>) {
     let word = |range: Range<usize>| Word {
         text: &line[range.clone()],
         span: range.start + offset..range.end + offset,
@@ -140,7 +146,7 @@ fn split_words(line: &str, offset: usize) -> Vec<Word<'_>> {
     if let Some(start) = start {
         words.push(word(start..end));
     }
-    words
+    (words, line.get(end..).filter(|comment| !comment.is_empty()))
 }
 
 /// Each line's number, pattern and owners, skipping blank lines and comments.

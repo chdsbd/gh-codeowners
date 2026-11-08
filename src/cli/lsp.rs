@@ -16,11 +16,12 @@ use gen_lsp_types::{
     BaseUri, CodeAction, CodeActionKind, CodeActionOptions, CodeActionParams, CodeActionProvider,
     Contents, Diagnostic, DiagnosticSeverity, DiagnosticTag, DidChangeTextDocumentParams,
     DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
-    DidOpenTextDocumentParams, DidSaveTextDocumentParams, FileSystemWatcher, GlobPattern, Hover,
-    HoverParams, HoverProvider, InitializeParams, InlayHint, InlayHintParams, InlayHintProvider,
-    Label, LspNotificationMethod, LspRequestMethod, MarkupContent, MarkupKind,
-    PublishDiagnosticsParams, Registration, RegistrationParams, RelativePattern, Save, SaveOptions,
-    ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentSync, TextDocumentSyncKind,
+    DidOpenTextDocumentParams, DidSaveTextDocumentParams, DocumentFormattingParams,
+    DocumentFormattingProvider, FileSystemWatcher, GlobPattern, Hover, HoverParams, HoverProvider,
+    InitializeParams, InlayHint, InlayHintParams, InlayHintProvider, Label, LspNotificationMethod,
+    LspRequestMethod, MarkupContent, MarkupKind, PublishDiagnosticsParams, Registration,
+    RegistrationParams, RelativePattern, Save, SaveOptions, ServerCapabilities,
+    TextDocumentContentChangeEvent, TextDocumentSync, TextDocumentSyncKind,
     TextDocumentSyncOptions, TextEdit, Uri, WorkspaceEdit,
 };
 use gh_codeowners::codeowners::{
@@ -28,6 +29,7 @@ use gh_codeowners::codeowners::{
     find_repo_root, ignored_codeowners, parse_codeowners, repo_root_for_codeowners, too_big,
 };
 use gh_codeowners::counter::{Rules, count, rule_list};
+use gh_codeowners::format::format;
 use gh_codeowners::report::Status;
 use gh_codeowners::{TrackedFiles, index_path, owners_of};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
@@ -178,6 +180,7 @@ impl<'a> Server<'a> {
                 ..Default::default()
             })),
             hover_provider: Some(HoverProvider::Bool(true)),
+            document_formatting_provider: Some(DocumentFormattingProvider::Bool(true)),
             inlay_hint_provider: Some(InlayHintProvider::Bool(true)),
             code_action_provider: Some(CodeActionProvider::CodeActionOptions(CodeActionOptions {
                 code_action_kinds: Some(vec![CodeActionKind::QuickFix]),
@@ -381,6 +384,10 @@ impl<'a> Server<'a> {
                 .extract::<CodeActionParams>(&method)
                 .map_err(|e| format!("{e:?}"))
                 .map(|(_, params)| serde_json::to_value(self.code_actions(&params)).unwrap()),
+            LspRequestMethod::TextDocumentFormatting => request
+                .extract::<DocumentFormattingParams>(&method)
+                .map_err(|e| format!("{e:?}"))
+                .map(|(_, params)| serde_json::to_value(self.format(&params)).unwrap()),
             LspRequestMethod::Custom(OWNER_METHOD) => request
                 .extract::<OwnerParams>(&method)
                 .map_err(|e| format!("{e:?}"))
@@ -554,6 +561,35 @@ impl<'a> Server<'a> {
     }
 
     /// Quick fixes for the problems in `params.range` that have one.
+    /// Edits that format a document, one for each line that changes, so the
+    /// editor keeps the cursor and the rest of the document as it is.
+    fn format(&self, params: &DocumentFormattingParams) -> Vec<TextEdit> {
+        let Some(document) = self.documents.get(params.text_document.uri.as_str()) else {
+            return Vec::new();
+        };
+        let text = &document.text;
+        let index = LineIndex::new(text);
+        let formatted = format(text);
+        let mut start = 0;
+        // Formatting keeps lines and their endings, so they pair up.
+        text.split('\n')
+            .zip(formatted.split('\n'))
+            .filter_map(|(raw, new_raw)| {
+                let line_start = start;
+                start += raw.len() + 1;
+                if raw == new_raw {
+                    return None;
+                }
+                let line = raw.strip_suffix('\r').unwrap_or(raw);
+                let new_line = new_raw.strip_suffix('\r').unwrap_or(new_raw);
+                Some(TextEdit {
+                    range: index.range(&(line_start..line_start + line.len())),
+                    new_text: new_line.to_string(),
+                })
+            })
+            .collect()
+    }
+
     fn code_actions(&mut self, params: &CodeActionParams) -> Vec<CodeAction> {
         let uri = &params.text_document.uri;
         let Some((analysis, _)) = self.analysis(uri.as_str()) else {

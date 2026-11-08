@@ -415,6 +415,33 @@ fn finds_the_rule_that_owns_a_file_with_unsaved_changes() {
 }
 
 #[test]
+fn formats_each_line_that_changes() {
+    let repo = repo("format");
+    let codeowners = repo.0.join(".github/CODEOWNERS");
+    let mut client = Client::start(&repo.0, json!({}));
+    client.open(
+        &codeowners,
+        "# Owners\r\n*  @acme/x\r\n/docs/ @acme/docs\r\n",
+    );
+    let edits = client.request(
+        "textDocument/formatting",
+        json!({
+            "textDocument": { "uri": uri(&codeowners) },
+            "options": { "tabSize": 2, "insertSpaces": true },
+        }),
+    );
+    // Not the comment, and not the line endings.
+    assert_eq!(
+        edits,
+        json!([{
+            "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 10 } },
+            "newText": "*      @acme/x",
+        }])
+    );
+    assert_eq!(client.shutdown(), 0);
+}
+
+#[test]
 fn exits_with_1_without_a_shutdown() {
     let repo = repo("exit");
     let mut client = Client::start(&repo.0, json!({}));
@@ -424,14 +451,25 @@ fn exits_with_1_without_a_shutdown() {
 
 #[test]
 fn rejects_options_for_other_commands() {
-    let output = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
-        .args(["lsp", "--json"])
-        .output()
-        .unwrap();
+    let run = |args: &[&str]| {
+        Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let output = run(&["lsp", "--root", "."]);
     assert_eq!(output.status.code(), Some(2));
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
-        "gh-codeowners: lsp doesn't take --codeowners, --root or --json\n"
+        "gh-codeowners: lsp doesn't take --codeowners or --root\n"
+    );
+    // --json is only on the commands that print JSON.
+    let output = run(&["lsp", "--json"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("unexpected argument '--json'")
     );
 }
 

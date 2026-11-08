@@ -1,0 +1,13 @@
+# Default owners
+*            @acme/platform
+
+# Frontend
+/web/   @acme/web   # React app
+/web/legacy/ @acme/web @acme/legacy # old app
+  /web/vendor/
+/docs/ docs@example.com # guides
+
+# Backend
+*.go                @acme/go
+/api/               @acme/api # REST
+/services/payments/ @acme/payments @acme/security # PCI

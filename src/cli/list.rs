@@ -19,9 +19,12 @@ pub(crate) struct Args {
     /// Only list rules that own no files
     #[arg(long)]
     unused: bool,
+    /// Output JSON
+    #[arg(long)]
+    json: bool,
 }
 
-pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<ExitCode, String> {
+pub(crate) fn run(file: &CodeownersFile, args: &Args) -> Result<ExitCode, String> {
     warn_if_ignored(file);
     let stats = stats_for(file)?;
     let rules: Vec<&RuleStats> = stats
@@ -29,7 +32,7 @@ pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<Exit
         .iter()
         .filter(|r| !args.unused || r.status != Status::Active)
         .collect();
-    print_stdout(&if json {
+    print_stdout(&if args.json {
         to_json(
             &rules
                 .iter()

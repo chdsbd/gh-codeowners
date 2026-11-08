@@ -4,7 +4,7 @@ use std::process::ExitCode;
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 
 use cli::load::load;
-use cli::{check, list, lsp, view};
+use cli::{check, fmt, list, lsp, view};
 
 mod cli;
 
@@ -20,9 +20,6 @@ struct Cli {
     /// Repository root (default: the repository containing the current directory)
     #[arg(long, global = true, value_name = "dir")]
     root: Option<PathBuf>,
-    /// Output JSON
-    #[arg(long, global = true)]
-    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -41,6 +38,15 @@ enum Command {
     ///
     /// Output matches GitHub's code owners icon tooltip.
     View(view::Args),
+    /// Format CODEOWNERS, like `terraform fmt`
+    ///
+    /// Removes indentation and extra spaces, and lines up the owners and
+    /// comments of consecutive rules. Changes only whitespace.
+    ///
+    /// Rewrites the file and prints its path if it changed. With
+    /// `--codeowners -`, prints the formatted text instead. With `--check`,
+    /// changes nothing and exits with 1 if the file isn't formatted.
+    Fmt(fmt::Args),
     /// Run a language server for CODEOWNERS files
     ///
     /// For editors like VS Code. It reports problems as you type, shows how
@@ -52,16 +58,17 @@ enum Command {
 fn run(cli: &Cli) -> Result<ExitCode, String> {
     if let Command::Lsp(args) = &cli.command {
         // The server finds each document's repository itself.
-        if cli.codeowners.is_some() || cli.root.is_some() || cli.json {
-            return Err("lsp doesn't take --codeowners, --root or --json".to_string());
+        if cli.codeowners.is_some() || cli.root.is_some() {
+            return Err("lsp doesn't take --codeowners or --root".to_string());
         }
         return lsp::run(args);
     }
     let file = load(cli)?;
     match &cli.command {
-        Command::Check(args) => check::run(&file, args, cli.json),
-        Command::List(args) => list::run(&file, args, cli.json),
-        Command::View(args) => view::run(&file, args, cli.json),
+        Command::Check(args) => check::run(&file, args),
+        Command::List(args) => list::run(&file, args),
+        Command::View(args) => view::run(&file, args),
+        Command::Fmt(args) => fmt::run(&file, args),
         Command::Lsp(_) => unreachable!("handled above"),
     }
 }

@@ -1,0 +1,6 @@
+    # Indented comment, and a run of rules with escapes and email owners
+foo/b\ ar.py   @x
+\#not-a-comment    @y#comment right after an owner
+/docs/  docs@example.com    @acme/docs
+/vendor/longest/path/without/owners/
+/é/ @z
