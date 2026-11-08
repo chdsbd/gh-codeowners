@@ -112,7 +112,9 @@ error: `/apps/web/` owns no files
 gh codeowners fmt
 ```
 
-Like `terraform fmt`, it changes only whitespace and has no options. Lines have no indentation or extra spaces, and the owners of consecutive rules line up one space after the longest pattern with owners, as do their comments. Only a blank line or a comment on its own line starts a new group, so each section lines up on its own. A rule with no owners stays in its group without moving the others.
+Formats CODEOWNERS based on `terraform fmt`'s behavior.
+
+Each group is formatted.
 
 ```
 # Frontend
@@ -126,7 +128,7 @@ Like `terraform fmt`, it changes only whitespace and has no options. Lines have 
 /api/ @acme/api # REST
 ```
 
-It prints the file's path if it changed it. In CI, `gh codeowners fmt --check` exits with 1 if the file isn't formatted, without changing it. With `--codeowners -`, it formats stdin to stdout. The language server formats too.
+Use `gh codeowners fmt --check` to error if the file isn't formatted.
 
 ### Editor support
 
