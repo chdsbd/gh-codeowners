@@ -85,6 +85,7 @@ fn check_problems(file: &CodeownersFile, unused: bool) -> Result<Vec<LineProblem
             span: None,
             error: false,
             message,
+            fix: None,
         });
     }
     // oversized files are reported via find_problems.
@@ -115,6 +116,7 @@ pub(crate) fn unused_problems<'a>(
             span: Some(rule.pattern_span.clone()),
             error: true,
             message: format!("`{}` owns no files - {}", rule.pattern, status.note()),
+            fix: None,
         })
         .collect()
 }

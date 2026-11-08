@@ -183,6 +183,8 @@ pub struct LineProblem {
     /// accepts it, but it likely doesn't do what it looks like it does.
     pub error: bool,
     pub message: String,
+    /// What to replace the span with to fix the problem, if it's clear.
+    pub fix: Option<String>,
 }
 
 impl LineProblem {
@@ -208,6 +210,7 @@ pub fn find_problems(text: &str) -> Vec<LineProblem> {
                 "GitHub ignores CODEOWNERS files over {MAX_CODEOWNERS_BYTES} bytes, and this one is {} bytes",
                 text.len()
             ),
+            fix: None,
         });
     }
     for (lineno, pattern, owners) in lines(text) {
@@ -217,6 +220,7 @@ pub fn find_problems(text: &str) -> Vec<LineProblem> {
                 span: Some(pattern.span),
                 error: problem.invalid,
                 message: problem.message,
+                fix: problem.fix,
             });
         }
         for owner in owners.iter().filter(|owner| !OWNER.is_match(owner.text)) {
@@ -228,6 +232,7 @@ pub fn find_problems(text: &str) -> Vec<LineProblem> {
                     "`{}` isn't a valid owner - owners must be @user, @org/team or an email address",
                     owner.text
                 ),
+                fix: None,
             });
         }
     }

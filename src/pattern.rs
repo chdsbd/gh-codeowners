@@ -14,29 +14,29 @@ pub struct Problem {
     pub invalid: bool,
     pub matches_nothing: bool,
     pub message: String,
+    /// The pattern the message suggests instead, if there's one.
+    pub fix: Option<String>,
 }
 
 impl Problem {
-    fn invalid(message: String) -> Problem {
-        Problem {
-            invalid: true,
-            matches_nothing: true,
-            message,
-        }
-    }
-
-    fn matches_nothing(message: &str) -> Problem {
+    fn matches_nothing(message: &str, fix: Option<String>) -> Problem {
         Problem {
             invalid: false,
             matches_nothing: true,
             message: message.to_string(),
+            fix,
         }
     }
 }
 
 pub fn problem(pattern: &str) -> Option<Problem> {
-    if let Some(message) = invalid_reason(pattern) {
-        return Some(Problem::invalid(message));
+    if let Some((message, fix)) = invalid_reason(pattern) {
+        return Some(Problem {
+            invalid: true,
+            matches_nothing: true,
+            message,
+            fix,
+        });
     }
     let name = negated_name(pattern);
     let pattern = name.unwrap_or(pattern);
@@ -47,11 +47,13 @@ pub fn problem(pattern: &str) -> Option<Problem> {
     {
         return Some(Problem::matches_nothing(
             "the pattern will never match any files - did you mean `*` instead?",
+            Some("*".to_string()),
         ));
     }
     if !brackets_pair_up(pattern) {
         return Some(Problem::matches_nothing(
             "GitHub matches nothing when a pattern has a different number of `\\[`s and `\\]`s",
+            None,
         ));
     }
     if pattern
@@ -60,18 +62,23 @@ pub fn problem(pattern: &str) -> Option<Problem> {
     {
         return Some(Problem::matches_nothing(
             "paths in git never have `.` or `..` segments, so GitHub matches nothing",
+            None,
         ));
     }
     if pattern.starts_with("\\[") && !pattern.contains('/') {
-        return Some(Problem::matches_nothing(&format!(
-            "GitHub matches nothing for a pattern starting with `\\[` and without a slash - did you mean `**/{pattern}`?"
-        )));
+        return Some(Problem::matches_nothing(
+            &format!(
+                "GitHub matches nothing for a pattern starting with `\\[` and without a slash - did you mean `**/{pattern}`?"
+            ),
+            Some(format!("**/{pattern}")),
+        ));
     }
     if name.is_some() {
         return Some(Problem {
             invalid: false,
             matches_nothing: false,
             message: "`!` doesn't negate a pattern on GitHub - this matches files named like the rest of the pattern, but not directories".to_string(),
+            fix: None,
         });
     }
     None
@@ -82,24 +89,33 @@ pub fn can_match(pattern: &str) -> bool {
         && problem(pattern).is_none_or(|p| !p.matches_nothing)
 }
 
-fn invalid_reason(pattern: &str) -> Option<String> {
+/// Why GitHub skips `pattern`, and the pattern to use instead, if there's
+/// one.
+fn invalid_reason(pattern: &str) -> Option<(String, Option<String>)> {
     let mut stars = 0;
     let mut chars = pattern.chars();
     while let Some(c) = chars.next() {
         stars = if c == '*' { stars + 1 } else { 0 };
-        let reason = match c {
+        let (reason, fix) = match c {
             // GitHub allows a trailing `\`, which escapes nothing.
-            '\\' if !matches!(chars.next(), None | Some(' ' | '\t' | '#' | '[' | ']' | '\\')) => {
-                "all `\\` characters must be escaped with another `\\` unless escaping: tab, space, #, [, ]".to_string()
-            }
-            '[' | ']' => format!(
-                "both `[` and `]` must be escaped with a `\\`, like `{}`",
-                escape_brackets(pattern)
+            '\\' if !matches!(chars.next(), None | Some(' ' | '\t' | '#' | '[' | ']' | '\\')) => (
+                "all `\\` characters must be escaped with another `\\` unless escaping: tab, space, #, [, ]".to_string(),
+                None,
             ),
-            _ if stars > 2 => format!("did you mean `{}` instead?", collapse_stars(pattern)),
+            '[' | ']' => {
+                let fix = escape_brackets(pattern);
+                (
+                    format!("both `[` and `]` must be escaped with a `\\`, like `{fix}`"),
+                    Some(fix),
+                )
+            }
+            _ if stars > 2 => {
+                let fix = collapse_stars(pattern);
+                (format!("did you mean `{fix}` instead?"), Some(fix))
+            }
             _ => continue,
         };
-        return Some(format!("`{pattern}` isn't a valid pattern - {reason}"));
+        return Some((format!("`{pattern}` isn't a valid pattern - {reason}"), fix));
     }
     None
 }
@@ -577,6 +593,18 @@ mod tests {
             message("/app/[id]/\\[x\\]"),
             "`/app/[id]/\\[x\\]` isn't a valid pattern - both `[` and `]` must be escaped with a `\\`, like `/app/\\[id\\]/\\[x\\]`"
         );
+    }
+
+    #[test]
+    fn gives_the_suggested_pattern_as_a_fix() {
+        let fix = |pattern| problem(pattern).unwrap().fix;
+        assert_eq!(fix("/tmp/***").as_deref(), Some("/tmp/**"));
+        assert_eq!(fix("/app/[id]/").as_deref(), Some("/app/\\[id\\]/"));
+        assert_eq!(fix("/").as_deref(), Some("*"));
+        assert_eq!(fix("\\[draft\\]*").as_deref(), Some("**/\\[draft\\]*"));
+        // No single obvious pattern to use instead.
+        assert_eq!(fix("a\\b"), None);
+        assert_eq!(fix("a/../b"), None);
     }
 
     #[test]

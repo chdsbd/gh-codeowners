@@ -289,6 +289,75 @@ fn shows_how_many_files_each_rule_owns() {
 }
 
 #[test]
+fn fixes_patterns_github_skips() {
+    let repo = repo("fixes");
+    let codeowners = repo.0.join(".github/CODEOWNERS");
+    let mut client = Client::start(&repo.0, json!({}));
+    client.open(
+        &codeowners,
+        "* @acme/x\n/app/[id]/ @acme/web\n/src/*** @acme/y\n",
+    );
+    let diagnostics = client.notification("textDocument/publishDiagnostics");
+    let actions = client.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": uri(&codeowners) },
+            "range": { "start": { "line": 1, "character": 3 }, "end": { "line": 1, "character": 3 } },
+            "context": { "diagnostics": [] },
+        }),
+    );
+    assert_eq!(
+        actions,
+        json!([{
+            "title": "Replace with `/app/\\[id\\]/`",
+            "kind": "quickfix",
+            "diagnostics": [diagnostics["diagnostics"][0]],
+            "isPreferred": true,
+            "edit": { "changes": { uri(&codeowners): [{
+                "range": { "start": { "line": 1, "character": 0 }, "end": { "line": 1, "character": 10 } },
+                "newText": "/app/\\[id\\]/",
+            }] } },
+        }])
+    );
+    // The whole file, asking only for quick fixes.
+    let actions = client.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": uri(&codeowners) },
+            "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 3, "character": 0 } },
+            "context": { "diagnostics": [], "only": ["quickfix"] },
+        }),
+    );
+    let titles: Vec<_> = actions
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|a| a["title"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        titles,
+        ["Replace with `/app/\\[id\\]/`", "Replace with `/src/**`"]
+    );
+    // Other kinds of actions.
+    let actions = client.request(
+        "textDocument/codeAction",
+        json!({
+            "textDocument": { "uri": uri(&codeowners) },
+            "range": { "start": { "line": 0, "character": 0 }, "end": { "line": 3, "character": 0 } },
+            "context": { "diagnostics": [], "only": ["refactor"] },
+        }),
+    );
+    assert_eq!(actions, json!([]));
+    // The diagnostic says why a rule owns nothing, so hovering adds nothing.
+    let hover = client.request(
+        "textDocument/hover",
+        json!({ "textDocument": { "uri": uri(&codeowners) }, "position": { "line": 1, "character": 3 } }),
+    );
+    assert_eq!(hover, Value::Null);
+    assert_eq!(client.shutdown(), 0);
+}
+
+#[test]
 fn warns_about_codeowners_files_github_ignores() {
     let repo = repo("ignored");
     write(&repo.0, "CODEOWNERS", "* @acme/x\n");
