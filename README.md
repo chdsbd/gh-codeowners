@@ -118,16 +118,16 @@ How well gh-codeowners, and others match GitHub's behavior. Count speed is the t
 |---|---|---|---|
 | gh-codeowners (this repository) | Rust | 4157/4157 | 0.039 s |
 | [sbdchd/codeowners](https://github.com/sbdchd/codeowners) | Python | 4039/4157 | — |
-| [hmarr/codeowners](https://github.com/hmarr/codeowners) | Go | 4021/4157 | 0.495 s |
-| [codeowners-tool](https://github.com/jordonpeterson/codeowners-tool) | Go | 4021/4157 | 1.4 s |
-| [codeowners-deadzone](https://www.npmjs.com/package/codeowners-deadzone) | Node | 4013/4157 | 97 s |
-| [snyk/github-codeowners](https://github.com/snyk/github-codeowners), via the [chdsbd/github-codeowners](https://github.com/chdsbd/github-codeowners) fork | Node | 4005/4157 | 30 s |
-| [codeowners-rs](https://crates.io/crates/codeowners-rs) | Rust | 4004/4157 | 0.059 s |
-| [jjmschofield/github-codeowners](https://github.com/jjmschofield/github-codeowners) | Node | 4004/4157 | 26 s |
+| [hmarr/codeowners](https://github.com/hmarr/codeowners) | Go | 4021/4157 | 0.495 s (13× slower) |
+| [codeowners-tool](https://github.com/jordonpeterson/codeowners-tool) | Go | 4021/4157 | 1.4 s (36× slower) |
+| [codeowners-deadzone](https://www.npmjs.com/package/codeowners-deadzone) | Node | 4013/4157 | 97 s (2,500× slower) |
+| [snyk/github-codeowners](https://github.com/snyk/github-codeowners), via the [chdsbd/github-codeowners](https://github.com/chdsbd/github-codeowners) fork | Node | 4005/4157 | 30 s (770× slower) |
+| [codeowners-rs](https://crates.io/crates/codeowners-rs) | Rust | 4004/4157 | 0.059 s (1.5× slower) |
+| [jjmschofield/github-codeowners](https://github.com/jjmschofield/github-codeowners) | Node | 4004/4157 | 26 s (670× slower) |
 | [softprops/codeowners](https://crates.io/crates/codeowners) | Rust | 3993/4157 | — |
-| [codeowners-audit](https://github.com/watson/codeowners-audit) | Node | 3991/4157 | 2.6 s |
-| [codeowners-validator](https://github.com/mszostok/codeowners-validator) | Go | 3990/4157 | 1.1 s |
-| [beaugunderson/codeowners](https://github.com/beaugunderson/codeowners) | Node | 3976/4157 | 26 s |
+| [codeowners-audit](https://github.com/watson/codeowners-audit) | Node | 3991/4157 | 2.6 s (67× slower) |
+| [codeowners-validator](https://github.com/mszostok/codeowners-validator) | Go | 3990/4157 | 1.1 s (28× slower) |
+| [beaugunderson/codeowners](https://github.com/beaugunderson/codeowners) | Node | 3976/4157 | 26 s (670× slower) |
 
 Where they differ:
 
