@@ -13,14 +13,15 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use gen_lsp_types::{
-    BaseUri, Contents, Diagnostic, DiagnosticSeverity, DiagnosticTag, DidChangeTextDocumentParams,
+    BaseUri, CodeAction, CodeActionKind, CodeActionOptions, CodeActionParams, CodeActionProvider,
+    Contents, Diagnostic, DiagnosticSeverity, DiagnosticTag, DidChangeTextDocumentParams,
     DidChangeWatchedFilesRegistrationOptions, DidCloseTextDocumentParams,
     DidOpenTextDocumentParams, DidSaveTextDocumentParams, FileSystemWatcher, GlobPattern, Hover,
     HoverParams, HoverProvider, InitializeParams, InlayHint, InlayHintParams, InlayHintProvider,
     Label, LspNotificationMethod, LspRequestMethod, MarkupContent, MarkupKind,
     PublishDiagnosticsParams, Registration, RegistrationParams, RelativePattern, Save, SaveOptions,
     ServerCapabilities, TextDocumentContentChangeEvent, TextDocumentSync, TextDocumentSyncKind,
-    TextDocumentSyncOptions, Uri,
+    TextDocumentSyncOptions, TextEdit, Uri, WorkspaceEdit,
 };
 use gh_codeowners::codeowners::{
     CODEOWNERS_LOCATIONS, CodeownersRule, LineProblem, check_size, find_codeowners, find_problems,
@@ -178,6 +179,10 @@ impl<'a> Server<'a> {
             })),
             hover_provider: Some(HoverProvider::Bool(true)),
             inlay_hint_provider: Some(InlayHintProvider::Bool(true)),
+            code_action_provider: Some(CodeActionProvider::CodeActionOptions(CodeActionOptions {
+                code_action_kinds: Some(vec![CodeActionKind::QuickFix]),
+                ..Default::default()
+            })),
             ..Default::default()
         }
     }
@@ -372,6 +377,10 @@ impl<'a> Server<'a> {
                 .extract::<InlayHintParams>(&method)
                 .map_err(|e| format!("{e:?}"))
                 .map(|(_, params)| serde_json::to_value(self.inlay_hints(&params)).unwrap()),
+            LspRequestMethod::TextDocumentCodeAction => request
+                .extract::<CodeActionParams>(&method)
+                .map_err(|e| format!("{e:?}"))
+                .map(|(_, params)| serde_json::to_value(self.code_actions(&params)).unwrap()),
             LspRequestMethod::Custom(OWNER_METHOD) => request
                 .extract::<OwnerParams>(&method)
                 .map_err(|e| format!("{e:?}"))
@@ -503,14 +512,14 @@ impl<'a> Server<'a> {
         let (rule, &(owned, status)) = analysis.rules.iter().zip(counts).find(|(rule, _)| {
             rule.pattern_span.contains(&offset) || rule.pattern_span.end == offset
         })?;
-        let value = match status {
-            Status::Active => format!("Owns {}", plural(owned, "file")),
-            _ => format!("Owns no files: {}", status.note()),
-        };
+        // A rule that owns nothing has a diagnostic saying why.
+        if status != Status::Active {
+            return None;
+        }
         Some(Hover {
             contents: Contents::MarkupContent(MarkupContent {
                 kind: MarkupKind::Markdown,
-                value,
+                value: format!("Owns {}", plural(owned, "file")),
             }),
             range: Some(analysis.index.range(&rule.pattern_span)),
         })
@@ -540,6 +549,48 @@ impl<'a> Server<'a> {
                 padding_left: Some(true),
                 padding_right: None,
                 data: None,
+            })
+            .collect()
+    }
+
+    /// Quick fixes for the problems in `params.range` that have one.
+    fn code_actions(&mut self, params: &CodeActionParams) -> Vec<CodeAction> {
+        let uri = &params.text_document.uri;
+        let Some((analysis, _)) = self.analysis(uri.as_str()) else {
+            return Vec::new();
+        };
+        let wanted = params
+            .context
+            .only
+            .as_ref()
+            .is_none_or(|only| only.iter().any(is_quick_fix));
+        if !wanted {
+            return Vec::new();
+        }
+        analysis
+            .problems
+            .iter()
+            .filter_map(|problem| {
+                let fix = problem.fix.as_ref()?;
+                let range = analysis.index.range(problem.span.as_ref()?);
+                if range.end < params.range.start || params.range.end < range.start {
+                    return None;
+                }
+                let edit = TextEdit {
+                    range,
+                    new_text: fix.clone(),
+                };
+                Some(CodeAction {
+                    title: format!("Replace with `{fix}`"),
+                    kind: Some(CodeActionKind::QuickFix),
+                    diagnostics: Some(vec![diagnostic(&analysis, problem)]),
+                    is_preferred: Some(true),
+                    edit: Some(WorkspaceEdit {
+                        changes: Some(HashMap::from([(uri.clone(), vec![edit])])),
+                        ..Default::default()
+                    }),
+                    ..Default::default()
+                })
             })
             .collect()
     }
@@ -629,6 +680,7 @@ fn location_problem(text: &str, path: &Path, root: &Path) -> Option<LineProblem>
         span: None,
         error: false,
         message,
+        fix: None,
     })
 }
 
@@ -641,29 +693,39 @@ fn same_file(a: &Path, b: &Path) -> bool {
     }
 }
 
-fn diagnostics(analysis: &Analysis) -> Vec<Diagnostic> {
-    let diagnostic = |problem: &LineProblem| {
-        // `check` shows the label under the word with the problem.
-        let message = match problem.title_and_label() {
-            (title, Some(label)) => format!("{title}; {label}"),
-            (title, None) => title.to_string(),
-        };
-        Diagnostic {
-            range: problem
-                .span
-                .as_ref()
-                .map(|span| analysis.index.range(span))
-                .unwrap_or_default(),
-            severity: Some(if problem.error {
-                DiagnosticSeverity::Error
-            } else {
-                DiagnosticSeverity::Warning
-            }),
-            source: Some("gh-codeowners".to_string()),
-            message: message.into(),
-            ..Default::default()
-        }
+/// Whether a client asking for code actions of `kind` wants quick fixes.
+fn is_quick_fix(kind: &CodeActionKind) -> bool {
+    let kind = String::from(kind.clone());
+    let quick_fix = String::from(CodeActionKind::QuickFix);
+    // Kinds are hierarchical, so "" wants everything.
+    kind.is_empty() || quick_fix == kind || quick_fix.starts_with(&format!("{kind}."))
+}
+
+fn diagnostic(analysis: &Analysis, problem: &LineProblem) -> Diagnostic {
+    // `check` shows the label under the word with the problem.
+    let message = match problem.title_and_label() {
+        (title, Some(label)) => format!("{title}; {label}"),
+        (title, None) => title.to_string(),
     };
+    Diagnostic {
+        range: problem
+            .span
+            .as_ref()
+            .map(|span| analysis.index.range(span))
+            .unwrap_or_default(),
+        severity: Some(if problem.error {
+            DiagnosticSeverity::Error
+        } else {
+            DiagnosticSeverity::Warning
+        }),
+        source: Some("gh-codeowners".to_string()),
+        message: message.into(),
+        ..Default::default()
+    }
+}
+
+fn diagnostics(analysis: &Analysis) -> Vec<Diagnostic> {
+    let diagnostic = |problem: &LineProblem| diagnostic(analysis, problem);
     let counts = analysis.counts.iter().flatten();
     let rules = analysis
         .rules
