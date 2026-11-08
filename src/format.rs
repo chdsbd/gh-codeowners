@@ -25,6 +25,8 @@ struct Line<'a> {
     comment: Option<&'a str>,
     // Whether the line ends with `\r\n`, which formatting keeps.
     crlf: bool,
+    // The line so far, as it's formatted.
+    out: String,
 }
 
 fn width(text: &str) -> usize {
@@ -33,64 +35,47 @@ fn width(text: &str) -> usize {
 
 /// The formatted CODEOWNERS file.
 pub fn format(text: &str) -> String {
-    let lines: Vec<Line> = text.split('\n').map(parse_line).collect();
-    let mut out: Vec<String> = lines
-        .iter()
-        .map(|line| line.pattern.unwrap_or_default().to_string())
-        .collect();
+    let mut lines: Vec<Line> = text.split('\n').map(parse_line).collect();
     // Owners first, since they move the comments after them.
-    align(&mut out, &lines, |line| line.owners.as_deref());
-    align(&mut out, &lines, |line| line.comment);
-    for (formatted, line) in out.iter_mut().zip(&lines) {
+    align(&mut lines, |line| line.owners.as_deref());
+    align(&mut lines, |line| line.comment);
+    for line in &mut lines {
         // A comment on its own line doesn't line up with anything.
         if line.pattern.is_none() {
-            formatted.push_str(line.comment.unwrap_or_default());
+            line.out.push_str(line.comment.unwrap_or_default());
         }
         if line.crlf {
-            formatted.push('\r');
-        } else if formatted.ends_with('\r') {
+            line.out.push('\r');
+        } else if line.out.ends_with('\r') {
             // An escaped `\r` at the end of a word, which would become a line
             // ending without the whitespace after it.
-            *formatted = line.raw.to_string();
+            line.out = line.raw.to_string();
         }
     }
-    out.join("\n")
+    lines
+        .iter()
+        .map(|line| line.out.as_str())
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Append `cell` to each rule that has one, lined up in each run of
 /// consecutive rules, one space after the longest rule with one so far.
-fn align<'a>(
-    out: &mut [String],
-    lines: &'a [Line<'a>],
-    cell: impl Fn(&'a Line<'a>) -> Option<&'a str>,
-) {
-    let mut start = 0;
-    while start < lines.len() {
-        let len = lines[start..]
+fn align(lines: &mut [Line], cell: for<'l> fn(&'l Line) -> Option<&'l str>) {
+    let rule = |line: &Line| line.pattern.is_some();
+    for run in lines.chunk_by_mut(|a, b| rule(a) && rule(b)) {
+        let column = run
             .iter()
-            .take_while(|line| line.pattern.is_some())
-            .count();
-        if len == 0 {
-            start += 1;
-            continue;
-        }
-        let run = start..start + len;
-        let column = out[run.clone()]
-            .iter()
-            .zip(&lines[run.clone()])
-            .filter(|(_, line)| cell(line).is_some())
-            .map(|(formatted, _)| width(formatted))
-            .max()
-            .unwrap_or(0)
-            + 1;
-        for (formatted, line) in out[run].iter_mut().zip(&lines[start..]) {
+            .filter(|line| rule(line) && cell(line).is_some())
+            .map(|line| width(&line.out))
+            .max();
+        let Some(column) = column else { continue };
+        for line in run {
             if let Some(cell) = cell(line) {
-                let padding = column - width(formatted);
-                formatted.extend(std::iter::repeat_n(' ', padding));
-                formatted.push_str(cell);
+                // Padding counts characters, like `width`.
+                line.out = format!("{:<column$} {cell}", line.out);
             }
         }
-        start += len;
     }
 }
 
@@ -109,6 +94,7 @@ fn parse_line(raw: &str) -> Line<'_> {
         owners: (!owners.is_empty()).then(|| owners.join(" ")),
         comment: comment.map(str::trim_end),
         crlf,
+        out: pattern.unwrap_or_default().to_string(),
     }
 }
 
