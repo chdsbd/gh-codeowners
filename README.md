@@ -119,8 +119,15 @@ How well gh-codeowners, and others match GitHub's behavior.
 | gh-codeowners (this repository) | Rust | 4157/4157 |
 | [sbdchd/codeowners](https://github.com/sbdchd/codeowners) | Python | 4039/4157 |
 | [hmarr/codeowners](https://github.com/hmarr/codeowners) | Go | 4021/4157 |
+| [codeowners-tool](https://github.com/jordonpeterson/codeowners-tool) | Go | 4021/4157 |
+| [codeowners-deadzone](https://www.npmjs.com/package/codeowners-deadzone) | Node | 4013/4157 |
 | [snyk/github-codeowners](https://github.com/snyk/github-codeowners), via the [chdsbd/github-codeowners](https://github.com/chdsbd/github-codeowners) fork | Node | 4005/4157 |
 | [codeowners-rs](https://crates.io/crates/codeowners-rs) | Rust | 4004/4157 |
+| [jjmschofield/github-codeowners](https://github.com/jjmschofield/github-codeowners) | Node | 4004/4157 |
+| [softprops/codeowners](https://crates.io/crates/codeowners) | Rust | 3993/4157 |
+| [codeowners-audit](https://github.com/watson/codeowners-audit) | Node | 3991/4157 |
+| [codeowners-validator](https://github.com/mszostok/codeowners-validator) | Go | 3990/4157 |
+| [beaugunderson/codeowners](https://github.com/beaugunderson/codeowners) | Node | 3976/4157 |
 
 Where they differ:
 
