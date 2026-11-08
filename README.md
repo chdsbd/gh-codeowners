@@ -46,7 +46,6 @@ Commands:
 Options:
       --codeowners <path>  CODEOWNERS file, or - for stdin (default: the one GitHub would use)
       --root <dir>         Repository root (default: the repository containing the current directory)
-      --json               Output JSON
   -h, --help               Print help
   -V, --version            Print version
 ```

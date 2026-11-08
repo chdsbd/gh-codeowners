@@ -20,9 +20,6 @@ struct Cli {
     /// Repository root (default: the repository containing the current directory)
     #[arg(long, global = true, value_name = "dir")]
     root: Option<PathBuf>,
-    /// Output JSON
-    #[arg(long, global = true)]
-    json: bool,
 }
 
 #[derive(Subcommand)]
@@ -44,9 +41,11 @@ enum Command {
     /// Format CODEOWNERS, like `terraform fmt`
     ///
     /// Removes indentation and extra spaces, and lines up the owners and
-    /// comments of consecutive rules. Changes only whitespace. Prints the
-    /// file's path if it needed formatting, or with `--codeowners -`, prints
-    /// the formatted text.
+    /// comments of consecutive rules. Changes only whitespace.
+    ///
+    /// Rewrites the file and prints its path if it changed. With
+    /// `--codeowners -`, prints the formatted text instead. With `--check`,
+    /// changes nothing and exits with 1 if the file isn't formatted.
     Fmt(fmt::Args),
     /// Run a language server for CODEOWNERS files
     ///
@@ -59,19 +58,16 @@ enum Command {
 fn run(cli: &Cli) -> Result<ExitCode, String> {
     if let Command::Lsp(args) = &cli.command {
         // The server finds each document's repository itself.
-        if cli.codeowners.is_some() || cli.root.is_some() || cli.json {
-            return Err("lsp doesn't take --codeowners, --root or --json".to_string());
+        if cli.codeowners.is_some() || cli.root.is_some() {
+            return Err("lsp doesn't take --codeowners or --root".to_string());
         }
         return lsp::run(args);
     }
-    if matches!(cli.command, Command::Fmt(_)) && cli.json {
-        return Err("fmt doesn't take --json".to_string());
-    }
     let file = load(cli)?;
     match &cli.command {
-        Command::Check(args) => check::run(&file, args, cli.json),
-        Command::List(args) => list::run(&file, args, cli.json),
-        Command::View(args) => view::run(&file, args, cli.json),
+        Command::Check(args) => check::run(&file, args),
+        Command::List(args) => list::run(&file, args),
+        Command::View(args) => view::run(&file, args),
         Command::Fmt(args) => fmt::run(&file, args),
         Command::Lsp(_) => unreachable!("handled above"),
     }

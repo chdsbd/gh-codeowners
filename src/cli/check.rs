@@ -13,11 +13,14 @@ pub(crate) struct Args {
     /// Report rules that own no files as errors too
     #[arg(long)]
     unused: bool,
+    /// Output JSON
+    #[arg(long)]
+    json: bool,
 }
 
-pub(crate) fn run(file: &CodeownersFile, args: &Args, json: bool) -> Result<ExitCode, String> {
+pub(crate) fn run(file: &CodeownersFile, args: &Args) -> Result<ExitCode, String> {
     let problems = check_problems(file, args.unused)?;
-    print_stdout(&if json {
+    print_stdout(&if args.json {
         to_json(&problems.iter().map(problem_json).collect::<Vec<_>>())
     } else if problems.is_empty() {
         format!("{}: no problems", display_path(file))

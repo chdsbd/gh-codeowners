@@ -621,5 +621,8 @@ fn fmt_formats_stdin_to_stdout() {
     let (status, stdout, _) =
         run_with_stdin(&repo, &["fmt", "--check", "--codeowners", "-"], "*   @a\n");
     assert_eq!((status, stdout.as_str()), (1, ""));
-    assert_eq!(run(&repo, &["fmt", "--json"]).0, 2);
+    // --json is only on the commands that print JSON.
+    let (status, _, stderr) = run(&repo, &["fmt", "--json"]);
+    assert_eq!(status, 2);
+    assert!(stderr.contains("unexpected argument '--json'"), "{stderr}");
 }
