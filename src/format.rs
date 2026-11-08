@@ -4,11 +4,11 @@
 //!
 //! - Lines have no indentation or trailing whitespace, and one space
 //!   between words.
-//! - On consecutive lines with owners, the owners line up, one space after
-//!   the longest pattern. A blank line, a comment, or a pattern with no
-//!   owners ends the run, so each section lines up on its own.
-//! - Likewise, comments after rules line up on consecutive lines that have
-//!   them.
+//! - In each run of consecutive rules, the owners line up, one space after
+//!   the longest pattern with owners. Only a blank line or a comment on its
+//!   own line ends a run, so each section lines up on its own. A rule with
+//!   no owners stays in its section, without moving the others.
+//! - Likewise, comments after rules line up in each run.
 //!
 //! There are no options, so every formatted file looks the same.
 
@@ -39,12 +39,8 @@ pub fn format(text: &str) -> String {
         .map(|line| line.pattern.unwrap_or_default().to_string())
         .collect();
     // Owners first, since they move the comments after them.
-    align(&mut out, &lines, |line| {
-        line.owners.as_deref().filter(|_| line.pattern.is_some())
-    });
-    align(&mut out, &lines, |line| {
-        line.comment.filter(|_| line.pattern.is_some())
-    });
+    align(&mut out, &lines, |line| line.owners.as_deref());
+    align(&mut out, &lines, |line| line.comment);
     for (formatted, line) in out.iter_mut().zip(&lines) {
         // A comment on its own line doesn't line up with anything.
         if line.pattern.is_none() {
@@ -61,8 +57,8 @@ pub fn format(text: &str) -> String {
     out.join("\n")
 }
 
-/// Append `cell` to each line that has one, lined up on consecutive lines,
-/// one space after the longest line so far.
+/// Append `cell` to each rule that has one, lined up in each run of
+/// consecutive rules, one space after the longest rule with one so far.
 fn align<'a>(
     out: &mut [String],
     lines: &'a [Line<'a>],
@@ -72,18 +68,27 @@ fn align<'a>(
     while start < lines.len() {
         let len = lines[start..]
             .iter()
-            .take_while(|line| cell(line).is_some())
+            .take_while(|line| line.pattern.is_some())
             .count();
         if len == 0 {
             start += 1;
             continue;
         }
         let run = start..start + len;
-        let column = out[run.clone()].iter().map(|s| width(s)).max().unwrap_or(0) + 1;
+        let column = out[run.clone()]
+            .iter()
+            .zip(&lines[run.clone()])
+            .filter(|(_, line)| cell(line).is_some())
+            .map(|(formatted, _)| width(formatted))
+            .max()
+            .unwrap_or(0)
+            + 1;
         for (formatted, line) in out[run].iter_mut().zip(&lines[start..]) {
-            let padding = column - width(formatted);
-            formatted.extend(std::iter::repeat_n(' ', padding));
-            formatted.push_str(cell(line).unwrap());
+            if let Some(cell) = cell(line) {
+                let padding = column - width(formatted);
+                formatted.extend(std::iter::repeat_n(' ', padding));
+                formatted.push_str(cell);
+            }
         }
         start += len;
     }
@@ -139,15 +144,25 @@ mod tests {
     }
 
     #[test]
-    fn a_pattern_without_owners_ends_a_run() {
-        let text = "/a/ @x\n/vendor/\n/longer/path/ @y\n";
-        assert_eq!(format(text), "/a/ @x\n/vendor/\n/longer/path/ @y\n");
+    fn a_rule_without_owners_stays_in_its_run() {
+        // Its pattern is the longest, but it doesn't move the others.
+        let text = "/a/ @x # one\n/a/vendor/longest/\n/longer/ @y # two\n";
+        assert_eq!(
+            format(text),
+            "/a/      @x # one\n/a/vendor/longest/\n/longer/ @y # two\n"
+        );
     }
 
     #[test]
-    fn lines_up_comments_after_patterns_without_owners() {
+    fn lines_up_comments_after_rules_without_owners() {
         let text = "/a/ @x # one\n/vendor/ # two\n";
         assert_eq!(format(text), "/a/ @x   # one\n/vendor/ # two\n");
+    }
+
+    #[test]
+    fn comments_and_blank_lines_end_a_run() {
+        let text = "/a/ @x\n# B\n/longer/ @y\n\n/longest/path/ @z\n";
+        assert_eq!(format(text), text);
     }
 
     #[test]

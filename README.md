@@ -113,12 +113,13 @@ error: `/apps/web/` owns no files
 gh codeowners fmt
 ```
 
-Like `terraform fmt`, it changes only whitespace and has no options. Lines have no indentation or extra spaces, and the owners of consecutive rules line up one space after the longest pattern, as do their comments. A blank line, a comment or a rule with no owners starts a new group, so each section lines up on its own.
+Like `terraform fmt`, it changes only whitespace and has no options. Lines have no indentation or extra spaces, and the owners of consecutive rules line up one space after the longest pattern with owners, as do their comments. Only a blank line or a comment on its own line starts a new group, so each section lines up on its own. A rule with no owners stays in its group without moving the others.
 
 ```
 # Frontend
 /web/        @acme/web # React app
 /web/legacy/ @acme/web @acme/legacy
+/web/vendor/
 /docs/       docs@example.com
 
 # Backend
