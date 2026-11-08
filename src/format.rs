@@ -1,16 +1,4 @@
 //! Formatting CODEOWNERS files, like `terraform fmt` formats HCL.
-//!
-//! Formatting changes only whitespace, and never adds or removes lines:
-//!
-//! - Lines have no indentation or trailing whitespace, and one space
-//!   between words.
-//! - In each run of consecutive rules, the owners line up, one space after
-//!   the longest pattern with owners. Only a blank line or a comment on its
-//!   own line ends a run, so each section lines up on its own. A rule with
-//!   no owners stays in its section, without moving the others.
-//! - Likewise, comments after rules line up in each run.
-//!
-//! There are no options, so every formatted file looks the same.
 
 use crate::codeowners::split_line;
 
