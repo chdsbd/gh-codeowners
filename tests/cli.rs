@@ -623,7 +623,7 @@ fn fmt_formats_stdin_to_stdout() {
     assert_eq!((status, stdout.as_str()), (1, ""));
     let (status, stdout, _) = run_with_stdin(
         &repo,
-        &["fmt", "--legacy", "--codeowners", "-"],
+        &["fmt", "--style", "legacy", "--codeowners", "-"],
         "*   @a   @b\n  /docs/ @c\n",
     );
     assert_eq!(
@@ -634,7 +634,8 @@ fn fmt_formats_stdin_to_stdout() {
         &repo,
         &[
             "fmt",
-            "--legacy",
+            "--style",
+            "legacy",
             "--alignment-offset",
             "1",
             "--codeowners",
@@ -644,10 +645,12 @@ fn fmt_formats_stdin_to_stdout() {
     );
     assert_eq!((status, stdout.as_str()), (0, "*       @a\n/docs/  @b\n"));
     let (status, _, stderr) = run(&repo, &["fmt", "--alignment-offset", "1"]);
-    assert_eq!(status, 2);
-    assert!(
-        stderr.contains("the following required arguments were not provided:\n  --legacy"),
-        "{stderr}"
+    assert_eq!(
+        (status, stderr.as_str()),
+        (
+            2,
+            "gh-codeowners: --alignment-offset needs --style legacy\n"
+        )
     );
     // --json is only on the commands that print JSON.
     let (status, _, stderr) = run(&repo, &["fmt", "--json"]);
