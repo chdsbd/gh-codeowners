@@ -23,8 +23,7 @@ pub(crate) struct Args {
 enum StyleArg {
     /// Line up owners and comments in each group of rules, like `terraform fmt`
     Default,
-    /// Line up the first owner of every rule in the file, and change nothing
-    /// else, like the VS Code extension did before 5.1.0
+    /// Format like the VS Code extension did before 5.1.0
     Legacy,
 }
 
