@@ -10,40 +10,32 @@ pub(crate) struct Args {
     /// Don't change the file. Exit with 1 if it isn't formatted
     #[arg(long)]
     check: bool,
-    /// How to format
-    #[arg(long, value_enum, default_value_t = StyleArg::Default)]
-    style: StyleArg,
-    /// With `--style legacy`, spaces between the longest pattern and the
-    /// first owners, besides the one that's always there (default: 4)
-    #[arg(long, value_name = "n")]
+    /// Line up the first owner of every rule in the file, and change nothing
+    /// else, like the VS Code extension did before 5.1.0
+    #[arg(long)]
+    legacy: bool,
+    /// Spaces between the longest pattern and the first owners, besides the
+    /// one that's always there (default: 4)
+    #[arg(long, value_name = "n", requires = "legacy")]
     alignment_offset: Option<usize>,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-enum StyleArg {
-    /// Line up owners and comments in each group of rules, like `terraform fmt`
-    Default,
-    /// Line up the first owner of every rule in the file, and change nothing
-    /// else, like the VS Code extension did before 5.1.0
-    Legacy,
-}
-
 impl Args {
-    fn style(&self) -> Result<Style, String> {
-        match (self.style, self.alignment_offset) {
-            (StyleArg::Default, None) => Ok(Style::Default),
-            (StyleArg::Default, Some(_)) => {
-                Err("--alignment-offset needs --style legacy".to_string())
+    fn style(&self) -> Style {
+        if self.legacy {
+            Style::Legacy {
+                alignment_offset: self
+                    .alignment_offset
+                    .unwrap_or(Style::DEFAULT_ALIGNMENT_OFFSET),
             }
-            (StyleArg::Legacy, offset) => Ok(Style::Legacy {
-                alignment_offset: offset.unwrap_or(Style::DEFAULT_ALIGNMENT_OFFSET),
-            }),
+        } else {
+            Style::Default
         }
     }
 }
 
 pub(crate) fn run(file: &CodeownersFile, args: &Args) -> Result<ExitCode, String> {
-    let formatted = format_with(&file.text, args.style()?);
+    let formatted = format_with(&file.text, args.style());
     if file.path == Path::new("-") {
         // From stdin, without a newline since the text has its own.
         if !args.check {
