@@ -41,7 +41,8 @@ enum Command {
     /// Format CODEOWNERS, like `terraform fmt`
     ///
     /// Removes indentation and extra spaces, and lines up the owners and
-    /// comments of consecutive rules. Changes only whitespace.
+    /// comments of consecutive rules. Changes only whitespace. With
+    /// `--style legacy`, formats like the VS Code extension did before 5.1.0.
     ///
     /// Rewrites the file and prints its path if it changed. With
     /// `--codeowners -`, prints the formatted text instead. With `--check`,

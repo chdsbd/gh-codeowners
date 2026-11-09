@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add `fmt --style legacy` and `--alignment-offset` to format like the VS Code extension did before 5.1.0: the first owner of every rule in the file lines up, and nothing else changes.
+- Add the language server setting `format`, from `initializationOptions` or `workspace/didChangeConfiguration`, to pick the formatting style: `{ "format": { "style": "legacy", "alignmentOffset": 4 } }`.
+
 ## 0.3.0 - 2026-11-09
 
 ### Added

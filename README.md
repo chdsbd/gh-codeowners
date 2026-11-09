@@ -130,9 +130,23 @@ Each group is formatted.
 
 Use `gh codeowners fmt --check` to error if the file isn't formatted.
 
+Use `--style legacy` to format like the VS Code extension did before it used gh-codeowners. The first owner of every rule in the file lines up, `--alignment-offset` spaces (default 4) plus one after the longest pattern. Indentation, the space between owners, and comments don't change.
+
+```
+gh codeowners fmt --style legacy --alignment-offset 4
+```
+
+```
+*                 @acme/platform
+  /web/           @acme/web   @acme/legacy # React app
+/docs/**/*.md     docs@example.com
+```
+
 ### Editor support
 
 Install [VS Code GitHub Code Owners](https://marketplace.visualstudio.com/items?itemName=chdsbd.github-code-owners) for editor support.
+
+Other editors can run `gh codeowners lsp`. To format in the legacy style, send `{ "format": { "style": "legacy", "alignmentOffset": 4 } }` as `initializationOptions`, or as the `settings` of `workspace/didChangeConfiguration`.
 
 ## Comparison
 

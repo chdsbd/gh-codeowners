@@ -29,7 +29,7 @@ use gh_codeowners::codeowners::{
     find_repo_root, ignored_codeowners, parse_codeowners, repo_root_for_codeowners, too_big,
 };
 use gh_codeowners::counter::{Rules, count, rule_list};
-use gh_codeowners::format::format;
+use gh_codeowners::format::{Style, format_with};
 use gh_codeowners::report::Status;
 use gh_codeowners::{TrackedFiles, index_path, owners_of};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
@@ -63,6 +63,52 @@ struct OwnerParams {
     uri: Uri,
 }
 
+/// Settings, from `initializationOptions` and the `settings` of
+/// `workspace/didChangeConfiguration`, like
+/// `{ "format": { "style": "legacy", "alignmentOffset": 4 } }`.
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct Settings {
+    format: FormatSettings,
+}
+
+#[derive(Deserialize, Default)]
+#[serde(default, rename_all = "camelCase")]
+struct FormatSettings {
+    style: FormatStyle,
+    alignment_offset: Option<usize>,
+}
+
+#[derive(Deserialize, Default, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+enum FormatStyle {
+    #[default]
+    Default,
+    Legacy,
+}
+
+impl Settings {
+    /// The settings in `value`, or the defaults if there are none.
+    fn parse(value: Option<serde_json::Value>) -> Result<Settings, String> {
+        match value {
+            None | Some(serde_json::Value::Null) => Ok(Settings::default()),
+            Some(value) => serde_json::from_value(value).map_err(|e| format!("Bad settings: {e}")),
+        }
+    }
+
+    fn format_style(&self) -> Style {
+        match self.format.style {
+            FormatStyle::Default => Style::Default,
+            FormatStyle::Legacy => Style::Legacy {
+                alignment_offset: self
+                    .format
+                    .alignment_offset
+                    .unwrap_or(Style::DEFAULT_ALIGNMENT_OFFSET),
+            },
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct OwnerResult {
     /// The file's path in its repository.
@@ -86,7 +132,12 @@ pub(crate) fn run(_args: &Args) -> Result<ExitCode, String> {
     let (id, params) = connection.initialize_start().map_err(|e| e.to_string())?;
     let params: InitializeParams =
         serde_json::from_value(params).map_err(|e| format!("Bad initialize request: {e}"))?;
-    let mut server = Server::new(&connection, &params);
+    // Bad settings shouldn't stop the server, so it uses the defaults.
+    let settings = Settings::parse(params.initialization_options.clone()).unwrap_or_else(|e| {
+        eprintln!("{e}");
+        Settings::default()
+    });
+    let mut server = Server::new(&connection, &params, &settings);
     let result = serde_json::json!({
         "capabilities": server.capabilities(),
         "serverInfo": { "name": "gh-codeowners", "version": env!("CARGO_PKG_VERSION") },
@@ -132,6 +183,7 @@ struct Server<'a> {
     watch_files: bool,
     relative_patterns: bool,
     refresh_inlay_hints: bool,
+    format_style: Style,
     // By URI.
     documents: HashMap<String, Document>,
     // Each repository's files, or None if they couldn't be listed.
@@ -147,7 +199,11 @@ struct Server<'a> {
 }
 
 impl<'a> Server<'a> {
-    fn new(connection: &'a Connection, params: &InitializeParams) -> Server<'a> {
+    fn new(
+        connection: &'a Connection,
+        params: &InitializeParams,
+        settings: &Settings,
+    ) -> Server<'a> {
         let capabilities = &params.capabilities;
         let workspace = capabilities.workspace.as_ref();
         let watched_files = workspace.and_then(|w| w.did_change_watched_files.as_ref());
@@ -159,6 +215,7 @@ impl<'a> Server<'a> {
                 .and_then(|w| w.inlay_hint.as_ref())
                 .and_then(|i| i.refresh_support)
                 == Some(true),
+            format_style: settings.format_style(),
             documents: HashMap::new(),
             files: HashMap::new(),
             watched: HashSet::new(),
@@ -343,6 +400,21 @@ impl<'a> Server<'a> {
             LspNotificationMethod::WorkspaceDidChangeWatchedFiles => {
                 // Only git's index is watched.
                 self.relist_at = Some(Instant::now() + INDEX_DEBOUNCE);
+            }
+            LspNotificationMethod::WorkspaceDidChangeConfiguration => {
+                #[derive(Deserialize)]
+                struct Params {
+                    settings: Option<serde_json::Value>,
+                }
+                let settings = notification
+                    .extract::<Params>(&method)
+                    .map_err(|e| format!("{e:?}"))
+                    .and_then(|params| Settings::parse(params.settings));
+                // Bad settings keep the ones before.
+                match settings {
+                    Ok(settings) => self.format_style = settings.format_style(),
+                    Err(e) => eprintln!("{e}"),
+                }
             }
             _ => {}
         }
@@ -569,7 +641,7 @@ impl<'a> Server<'a> {
         };
         let text = &document.text;
         let index = LineIndex::new(text);
-        let formatted = format(text);
+        let formatted = format_with(text, self.format_style);
         let mut start = 0;
         // Formatting keeps lines and their endings, so they pair up.
         text.split('\n')

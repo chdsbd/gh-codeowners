@@ -21,6 +21,34 @@ fn width(text: &str) -> usize {
     text.chars().count()
 }
 
+/// How to format a CODEOWNERS file.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Style {
+    /// Like `terraform fmt`: see [`format`].
+    #[default]
+    Default,
+    /// Like the VS Code extension formatted before it used gh-codeowners:
+    /// see [`format_legacy`].
+    Legacy {
+        /// Spaces after the longest pattern, besides the one that's always
+        /// there.
+        alignment_offset: usize,
+    },
+}
+
+impl Style {
+    /// The VS Code extension's default offset.
+    pub const DEFAULT_ALIGNMENT_OFFSET: usize = 4;
+}
+
+/// The CODEOWNERS file formatted in `style`.
+pub fn format_with(text: &str, style: Style) -> String {
+    match style {
+        Style::Default => format(text),
+        Style::Legacy { alignment_offset } => format_legacy(text, alignment_offset),
+    }
+}
+
 /// The formatted CODEOWNERS file.
 pub fn format(text: &str) -> String {
     let mut lines: Vec<Line> = text.split('\n').map(parse_line).collect();
@@ -84,6 +112,48 @@ fn parse_line(raw: &str) -> Line<'_> {
         crlf,
         out: pattern.unwrap_or_default().to_string(),
     }
+}
+
+/// The CODEOWNERS file formatted like the VS Code extension did before it
+/// used gh-codeowners: the first owner of every rule in the file lines up,
+/// `alignment_offset + 1` spaces after the longest pattern, counting its
+/// indentation. Only the space between a rule's pattern and its first owner
+/// changes. Indentation, the space between owners, comments, and lines
+/// without owners stay as they are.
+pub fn format_legacy(text: &str, alignment_offset: usize) -> String {
+    // Each line, and where its pattern ends and its first owner starts.
+    let lines: Vec<(&str, Option<(usize, usize)>)> = text
+        .split('\n')
+        .map(|raw| {
+            let line = raw.strip_suffix('\r').unwrap_or(raw);
+            let (words, _) = split_line(line, 0);
+            let gap = match words.as_slice() {
+                [pattern, owner, ..] => Some((pattern.span.end, owner.span.start)),
+                _ => None,
+            };
+            (raw, gap)
+        })
+        .collect();
+    let Some(longest) = lines
+        .iter()
+        .filter_map(|(raw, gap)| gap.map(|(end, _)| width(&raw[..end])))
+        .max()
+    else {
+        return text.to_string();
+    };
+    let column = longest + alignment_offset + 1;
+    lines
+        .iter()
+        .map(|&(raw, gap)| match gap {
+            Some((end, start)) => {
+                let pattern = &raw[..end];
+                let padding = column - width(pattern);
+                format!("{pattern}{}{}", " ".repeat(padding), &raw[start..])
+            }
+            None => raw.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]
@@ -189,5 +259,44 @@ foo/b\ ar.py   @x
     #[test]
     fn keeps_a_line_whose_last_word_ends_with_an_escaped_cr() {
         assert_eq!(format("x\\\r  \n"), "x\\\r  \n");
+    }
+
+    #[test]
+    fn legacy_lines_up_first_owners_across_the_file() {
+        assert_snapshot!(format_legacy(r"
+*               @foo
+  /some-path @bar   @baz   # kept as is
+/docs/**/*.md                     @foo
+
+# a comment
+/vendor/
+/vendor/ # no owners
+/web/@scoped/ a@example.com
+", 4), @r"
+        *                 @foo
+          /some-path      @bar   @baz   # kept as is
+        /docs/**/*.md     @foo
+
+        # a comment
+        /vendor/
+        /vendor/ # no owners
+        /web/@scoped/     a@example.com
+        ");
+    }
+
+    #[test]
+    fn legacy_offset_is_spaces_after_the_one_that_is_always_there() {
+        assert_eq!(format_legacy("/a/ @x\n/bb/ @y\n", 0), "/a/  @x\n/bb/ @y\n");
+        assert_eq!(format_legacy("/a/ @x\n", 2), "/a/   @x\n");
+    }
+
+    #[test]
+    fn legacy_keeps_line_endings_and_files_without_owners() {
+        assert_eq!(
+            format_legacy("* @x\r\n/a/ @y\r\n", 1),
+            "*    @x\r\n/a/  @y\r\n"
+        );
+        assert_eq!(format_legacy("", 4), "");
+        assert_eq!(format_legacy("# only\n  /a/\n", 4), "# only\n  /a/\n");
     }
 }

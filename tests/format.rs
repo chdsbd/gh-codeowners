@@ -1,5 +1,5 @@
 use gh_codeowners::codeowners::{find_problems, parse_codeowners};
-use gh_codeowners::format::format;
+use gh_codeowners::format::{format, format_legacy};
 use insta::{assert_snapshot, glob};
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -48,6 +48,30 @@ fn formats_fixtures() {
     });
 }
 
+/// The VS Code extension's old formatter, which `format_legacy` keeps for
+/// those who prefer it, formatted its test file like this.
+#[test]
+fn legacy_matches_the_vscode_extensions_old_formatter() {
+    let text = std::fs::read_to_string("tests/format/vscode-extension.codeowners").unwrap();
+    assert_eq!(
+        format_legacy(&text, 4),
+        "\
+*                                    @foo
+  /some-path                         @bar
+another-path/but-loooooooooonger     @baz
+
+# a comment
+
+    # an indented comment
+/docs/**/*.md                        @foo @bar
+# /docs/**/*.rst                     @foo @bar
+"
+    );
+    let comments =
+        std::fs::read_to_string("tests/format/vscode-extension-comments.codeowners").unwrap();
+    assert_eq!(format_legacy(&comments, 4), comments);
+}
+
 fn without_whitespace(line: &str) -> String {
     line.chars().filter(|c| !c.is_whitespace()).collect()
 }
@@ -70,8 +94,22 @@ proptest! {
     }
 
     #[test]
-    fn formatting_keeps_rules_and_problems(text in text()) {
-        let formatted = format(&text);
+    fn legacy_formatting_twice_changes_nothing(text in text(), offset in 0..6usize) {
+        let once = format_legacy(&text, offset);
+        prop_assert_eq!(format_legacy(&once, offset), once);
+    }
+
+    #[test]
+    fn legacy_formatting_changes_only_whitespace_within_lines(text in text(), offset in 0..6usize) {
+        let formatted = format_legacy(&text, offset);
+        let before: Vec<String> = text.split('\n').map(without_whitespace).collect();
+        let after: Vec<String> = formatted.split('\n').map(without_whitespace).collect();
+        prop_assert_eq!(before, after);
+    }
+
+    #[test]
+    fn formatting_keeps_rules_and_problems(text in text(), legacy in any::<bool>()) {
+        let formatted = if legacy { format_legacy(&text, 4) } else { format(&text) };
         let rules = |text: &str| -> Vec<_> {
             parse_codeowners(text)
                 .into_iter()
