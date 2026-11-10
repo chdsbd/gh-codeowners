@@ -2,7 +2,7 @@
 
 ## Releasing
 
-Bump the version in `Cargo.toml` and add a section for it to `CHANGELOG.md`, which CI checks with `s/check-version`. When that reaches `main`, [`release.yml`](.github/workflows/release.yml) sees the version has no tag, tags the commit and drafts a GitHub release with the version's changelog section and a binary for each platform, named like `gh-codeowners-darwin-arm64`, which is how `gh extension install` finds it. Publish the draft once it looks right.
+Bump the version in `Cargo.toml` and add a section for it to `CHANGELOG.md`, which CI checks with `s/check-version`. When that reaches `main`, [`release.yml`](.github/workflows/release.yml) sees the version has no release and drafts one with the version's changelog section and a binary for each platform, named like `gh-codeowners-darwin-arm64`, which is how `gh extension install` finds it. Once every binary is attached, the run waits for approval in the `release` environment. Approving it publishes the release and creates the tag.
 
 ## Testing
 
