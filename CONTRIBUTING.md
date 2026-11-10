@@ -2,14 +2,9 @@
 
 ## Releasing
 
-Bump the version in `Cargo.toml` and add a section for it to `CHANGELOG.md`, which CI checks with `s/check-version`. Then push a matching tag:
-
-```
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-[`release.yml`](.github/workflows/release.yml) builds a binary for each platform and attaches it to a GitHub release, named like `gh-codeowners-darwin-arm64`, which is how `gh extension install` finds it.
+1. Bump the version in `Cargo.toml` and update `CHANGELOG.md`.
+2. Merge your PR and GitHub Actions will build binaries and create a draft release.
+3. Approve the `release` deployment to let GitHub Actions finish publishing.
 
 ## Testing
 
