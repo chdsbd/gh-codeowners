@@ -130,13 +130,11 @@ Each group is formatted.
 
 Use `gh codeowners fmt --check` to error if the file isn't formatted.
 
-Use `--align file` to line up owners across the whole file, like the old VS Code extension formatting, and `--spacing <n>` to change the spaces before owners.
+Use `--align file` to line up owners across the file. Use `--spacing <n>` to change spaces before owners.
 
 ### Editor support
 
 Install [VS Code GitHub Code Owners](https://marketplace.visualstudio.com/items?itemName=chdsbd.github-code-owners) for editor support.
-
-Other editors can run `gh codeowners lsp`. To format like the old VS Code extension, send `{ "format": { "align": "file", "spacing": 5 } }` as `initializationOptions`, or as the `settings` of `workspace/didChangeConfiguration`.
 
 ## Comparison
 
