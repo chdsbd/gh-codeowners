@@ -1,9 +1,10 @@
 name: Release
 
-# Pushing a version to main that has no tag yet tags the commit and publishes
-# a release with a binary for each platform, named so
-# `gh extension install chdsbd/gh-codeowners` finds them:
-# gh-codeowners-<GOOS>-<GOARCH>, with .exe on Windows.
+# Pushing a version to main that has no tag yet tags the commit and drafts a
+# release with the version's CHANGELOG.md section and a binary for each
+# platform, named so `gh extension install chdsbd/gh-codeowners` finds them:
+# gh-codeowners-<GOOS>-<GOARCH>, with .exe on Windows. Publish the draft to
+# release it.
 on:
   push:
     branches:
@@ -17,8 +18,6 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # gh installs from the latest published release, so start with a draft and
-  # publish it once every binary is attached.
   draft:
     runs-on: ubuntu-latest
     permissions:
@@ -43,8 +42,9 @@ jobs:
           GH_REPO: ${{ github.repository }}
       - if: steps.version.outputs.tag
         run: |
+          s/release-notes "$TAG" > notes.md
           gh api "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$GITHUB_SHA" --silent
-          gh release create "$TAG" --draft --verify-tag --generate-notes --title "$TAG"
+          gh release create "$TAG" --draft --verify-tag --notes-file notes.md --title "$TAG"
         env:
           TAG: ${{ steps.version.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
@@ -113,14 +113,3 @@ jobs:
           asset="gh-codeowners-$PLATFORM$EXE"
           cp "target/$TARGET/release/gh-codeowners$EXE" "$asset"
           gh release upload "$TAG" "$asset"
-  publish:
-    needs: [draft, build]
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - run: gh release edit "$TAG" --draft=false --latest
-        env:
-          TAG: ${{ needs.draft.outputs.tag }}
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
