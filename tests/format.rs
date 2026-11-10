@@ -53,7 +53,10 @@ fn formats_fixtures() {
 /// offset of 4, which made 5 spaces.
 #[test]
 fn file_matches_the_vscode_extensions_old_formatter() {
-    let text = std::fs::read_to_string("tests/format/vscode-extension.codeowners").unwrap();
+    // Git checks the fixture out with CRLF line endings on Windows.
+    let text = std::fs::read_to_string("tests/format/vscode-extension.codeowners")
+        .unwrap()
+        .replace("\r\n", "\n");
     assert_eq!(
         format_file(&text, 5),
         "\
