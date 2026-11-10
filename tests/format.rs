@@ -1,5 +1,5 @@
 use gh_codeowners::codeowners::{find_problems, parse_codeowners};
-use gh_codeowners::format::{format, format_legacy};
+use gh_codeowners::format::{format, format_file, format_group};
 use insta::{assert_snapshot, glob};
 use proptest::prelude::*;
 use proptest::sample::select;
@@ -48,13 +48,14 @@ fn formats_fixtures() {
     });
 }
 
-/// The VS Code extension's old formatter, which `format_legacy` keeps for
-/// those who prefer it, formatted its test file like this.
+/// The VS Code extension's old formatter, which `format_file` keeps for
+/// those who prefer it, formatted its test file like this with its default
+/// offset of 4, which made 5 spaces.
 #[test]
-fn legacy_matches_the_vscode_extensions_old_formatter() {
+fn file_matches_the_vscode_extensions_old_formatter() {
     let text = std::fs::read_to_string("tests/format/vscode-extension.codeowners").unwrap();
     assert_eq!(
-        format_legacy(&text, 4),
+        format_file(&text, 5),
         "\
 *                                    @foo
   /some-path                         @bar
@@ -69,7 +70,7 @@ another-path/but-loooooooooonger     @baz
     );
     let comments =
         std::fs::read_to_string("tests/format/vscode-extension-comments.codeowners").unwrap();
-    assert_eq!(format_legacy(&comments, 4), comments);
+    assert_eq!(format_file(&comments, 5), comments);
 }
 
 fn without_whitespace(line: &str) -> String {
@@ -94,22 +95,32 @@ proptest! {
     }
 
     #[test]
-    fn legacy_formatting_twice_changes_nothing(text in text(), offset in 0..6usize) {
-        let once = format_legacy(&text, offset);
-        prop_assert_eq!(format_legacy(&once, offset), once);
+    fn formatting_with_spacing_twice_changes_nothing(text in text(), spacing in 1..6usize) {
+        let once = format_file(&text, spacing);
+        prop_assert_eq!(format_file(&once, spacing), once);
+        let once = format_group(&text, spacing);
+        prop_assert_eq!(format_group(&once, spacing), once);
     }
 
     #[test]
-    fn legacy_formatting_changes_only_whitespace_within_lines(text in text(), offset in 0..6usize) {
-        let formatted = format_legacy(&text, offset);
+    fn file_formatting_changes_only_whitespace_within_lines(text in text(), spacing in 1..6usize) {
+        let formatted = format_file(&text, spacing);
         let before: Vec<String> = text.split('\n').map(without_whitespace).collect();
         let after: Vec<String> = formatted.split('\n').map(without_whitespace).collect();
         prop_assert_eq!(before, after);
     }
 
     #[test]
-    fn formatting_keeps_rules_and_problems(text in text(), legacy in any::<bool>()) {
-        let formatted = if legacy { format_legacy(&text, 4) } else { format(&text) };
+    fn formatting_keeps_rules_and_problems(
+        text in text(),
+        file in any::<bool>(),
+        spacing in 1..6usize,
+    ) {
+        let formatted = if file {
+            format_file(&text, spacing)
+        } else {
+            format_group(&text, spacing)
+        };
         let rules = |text: &str| -> Vec<_> {
             parse_codeowners(text)
                 .into_iter()

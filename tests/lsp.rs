@@ -451,13 +451,13 @@ fn formats_each_line_that_changes() {
 }
 
 #[test]
-fn formats_in_the_style_from_the_settings() {
-    let repo = repo("format-style");
+fn formats_with_the_alignment_from_the_settings() {
+    let repo = repo("format-align");
     let codeowners = repo.0.join(".github/CODEOWNERS");
     let mut client = Client::start_with_options(
         &repo.0,
         json!({}),
-        json!({ "format": { "style": "legacy", "alignmentOffset": 2 } }),
+        json!({ "format": { "align": "file", "spacing": 3 } }),
     );
     client.open(&codeowners, "*  @acme/x   @y\n/docs/ @acme/docs\n");
     let format = |client: &mut Client| {
@@ -482,13 +482,18 @@ fn formats_in_the_style_from_the_settings() {
     );
     client.notify(
         "workspace/didChangeConfiguration",
-        json!({ "settings": { "format": { "style": "default" } } }),
+        json!({ "settings": { "format": { "align": "group" } } }),
     );
     assert_eq!(format(&mut client), ["*      @acme/x @y"]);
     // Bad settings keep the ones before.
     client.notify(
         "workspace/didChangeConfiguration",
-        json!({ "settings": { "format": { "style": "sideways" } } }),
+        json!({ "settings": { "format": { "align": "sideways" } } }),
+    );
+    assert_eq!(format(&mut client), ["*      @acme/x @y"]);
+    client.notify(
+        "workspace/didChangeConfiguration",
+        json!({ "settings": { "format": { "spacing": 0 } } }),
     );
     assert_eq!(format(&mut client), ["*      @acme/x @y"]);
     assert_eq!(client.shutdown(), 0);

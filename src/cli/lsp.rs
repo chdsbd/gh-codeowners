@@ -29,7 +29,7 @@ use gh_codeowners::codeowners::{
     find_repo_root, ignored_codeowners, parse_codeowners, repo_root_for_codeowners, too_big,
 };
 use gh_codeowners::counter::{Rules, count, rule_list};
-use gh_codeowners::format::{Style, format_with};
+use gh_codeowners::format::{Align, format_with};
 use gh_codeowners::report::Status;
 use gh_codeowners::{TrackedFiles, index_path, owners_of};
 use lsp_server::{Connection, ErrorCode, Message, Notification, Request, RequestId, Response};
@@ -65,46 +65,56 @@ struct OwnerParams {
 
 /// Settings, from `initializationOptions` and the `settings` of
 /// `workspace/didChangeConfiguration`, like
-/// `{ "format": { "style": "legacy", "alignmentOffset": 4 } }`.
-#[derive(Deserialize, Default)]
+/// `{ "format": { "align": "file", "spacing": 5 } }`.
+#[derive(Deserialize, Default, Clone, Copy)]
 #[serde(default)]
 struct Settings {
     format: FormatSettings,
 }
 
-#[derive(Deserialize, Default)]
-#[serde(default, rename_all = "camelCase")]
+#[derive(Deserialize, Clone, Copy)]
+#[serde(default)]
 struct FormatSettings {
-    style: FormatStyle,
-    alignment_offset: Option<usize>,
+    align: FormatAlign,
+    spacing: usize,
+}
+
+impl Default for FormatSettings {
+    fn default() -> Self {
+        FormatSettings {
+            align: FormatAlign::Group,
+            spacing: 1,
+        }
+    }
 }
 
 #[derive(Deserialize, Default, Clone, Copy)]
 #[serde(rename_all = "lowercase")]
-enum FormatStyle {
+enum FormatAlign {
     #[default]
-    Default,
-    Legacy,
+    Group,
+    File,
 }
 
 impl Settings {
     /// The settings in `value`, or the defaults if there are none.
     fn parse(value: Option<serde_json::Value>) -> Result<Settings, String> {
-        match value {
-            None | Some(serde_json::Value::Null) => Ok(Settings::default()),
-            Some(value) => serde_json::from_value(value).map_err(|e| format!("Bad settings: {e}")),
+        let settings: Settings = match value {
+            None | Some(serde_json::Value::Null) => return Ok(Settings::default()),
+            Some(value) => {
+                serde_json::from_value(value).map_err(|e| format!("Bad settings: {e}"))?
+            }
+        };
+        if settings.format.spacing < 1 {
+            return Err("Bad settings: format.spacing must be at least 1".to_string());
         }
+        Ok(settings)
     }
 
-    fn format_style(&self) -> Style {
-        match self.format.style {
-            FormatStyle::Default => Style::Default,
-            FormatStyle::Legacy => Style::Legacy {
-                alignment_offset: self
-                    .format
-                    .alignment_offset
-                    .unwrap_or(Style::DEFAULT_ALIGNMENT_OFFSET),
-            },
+    fn format_align(&self) -> Align {
+        match self.format.align {
+            FormatAlign::Group => Align::Group,
+            FormatAlign::File => Align::File,
         }
     }
 }
@@ -183,7 +193,7 @@ struct Server<'a> {
     watch_files: bool,
     relative_patterns: bool,
     refresh_inlay_hints: bool,
-    format_style: Style,
+    settings: Settings,
     // By URI.
     documents: HashMap<String, Document>,
     // Each repository's files, or None if they couldn't be listed.
@@ -215,7 +225,7 @@ impl<'a> Server<'a> {
                 .and_then(|w| w.inlay_hint.as_ref())
                 .and_then(|i| i.refresh_support)
                 == Some(true),
-            format_style: settings.format_style(),
+            settings: *settings,
             documents: HashMap::new(),
             files: HashMap::new(),
             watched: HashSet::new(),
@@ -412,7 +422,7 @@ impl<'a> Server<'a> {
                     .and_then(|params| Settings::parse(params.settings));
                 // Bad settings keep the ones before.
                 match settings {
-                    Ok(settings) => self.format_style = settings.format_style(),
+                    Ok(settings) => self.settings = settings,
                     Err(e) => eprintln!("{e}"),
                 }
             }
@@ -641,7 +651,11 @@ impl<'a> Server<'a> {
         };
         let text = &document.text;
         let index = LineIndex::new(text);
-        let formatted = format_with(text, self.format_style);
+        let formatted = format_with(
+            text,
+            self.settings.format_align(),
+            self.settings.format.spacing,
+        );
         let mut start = 0;
         // Formatting keeps lines and their endings, so they pair up.
         text.split('\n')

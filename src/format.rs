@@ -21,40 +21,41 @@ fn width(text: &str) -> usize {
     text.chars().count()
 }
 
-/// How to format a CODEOWNERS file.
+/// Which rules' owners line up in one column.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Style {
-    /// Like `terraform fmt`: see [`format`].
+pub enum Align {
+    /// Each group of consecutive rules: see [`format_group`].
     #[default]
-    Default,
-    /// Like the VS Code extension formatted before it used gh-codeowners:
-    /// see [`format_legacy`].
-    Legacy {
-        /// Spaces after the longest pattern, besides the one that's always
-        /// there.
-        alignment_offset: usize,
-    },
+    Group,
+    /// Every rule in the file, like the VS Code extension formatted before it
+    /// used gh-codeowners: see [`format_file`].
+    File,
 }
 
-impl Style {
-    /// The VS Code extension's default offset.
-    pub const DEFAULT_ALIGNMENT_OFFSET: usize = 4;
-}
-
-/// The CODEOWNERS file formatted in `style`.
-pub fn format_with(text: &str, style: Style) -> String {
-    match style {
-        Style::Default => format(text),
-        Style::Legacy { alignment_offset } => format_legacy(text, alignment_offset),
+/// The CODEOWNERS file formatted with `align`, and `spacing` spaces between
+/// the longest pattern and the owners. Spacing is at least 1.
+pub fn format_with(text: &str, align: Align, spacing: usize) -> String {
+    match align {
+        Align::Group => format_group(text, spacing),
+        Align::File => format_file(text, spacing),
     }
 }
 
-/// The formatted CODEOWNERS file.
+/// The formatted CODEOWNERS file, with each group's owners one space after
+/// its longest pattern.
 pub fn format(text: &str) -> String {
+    format_group(text, 1)
+}
+
+/// The CODEOWNERS file formatted like `terraform fmt`: indentation and extra
+/// spaces removed, and the owners and comments of each group of consecutive
+/// rules lined up. Owners start `spacing` spaces after the group's longest
+/// pattern, and comments one space after the longest owners.
+pub fn format_group(text: &str, spacing: usize) -> String {
     let mut lines: Vec<Line> = text.split('\n').map(parse_line).collect();
     // Owners first, since they move the comments after them.
-    align(&mut lines, |line| line.owners.as_deref());
-    align(&mut lines, |line| line.comment);
+    align(&mut lines, spacing.max(1), |line| line.owners.as_deref());
+    align(&mut lines, 1, |line| line.comment);
     for line in &mut lines {
         // A comment on its own line doesn't line up with anything.
         if line.pattern.is_none() {
@@ -76,8 +77,8 @@ pub fn format(text: &str) -> String {
 }
 
 /// Append `cell` to each rule that has one, lined up in each run of
-/// consecutive rules, one space after the longest rule with one so far.
-fn align(lines: &mut [Line], cell: for<'l> fn(&'l Line) -> Option<&'l str>) {
+/// consecutive rules, `spacing` spaces after the longest rule with one so far.
+fn align(lines: &mut [Line], spacing: usize, cell: for<'l> fn(&'l Line) -> Option<&'l str>) {
     let rule = |line: &Line| line.pattern.is_some();
     for run in lines.chunk_by_mut(|a, b| rule(a) && rule(b)) {
         let column = run
@@ -89,7 +90,7 @@ fn align(lines: &mut [Line], cell: for<'l> fn(&'l Line) -> Option<&'l str>) {
         for line in run {
             if let Some(cell) = cell(line) {
                 // Padding counts characters, like `width`.
-                line.out = format!("{:<column$} {cell}", line.out);
+                line.out = format!("{:<column$}{:spacing$}{cell}", line.out, "");
             }
         }
     }
@@ -116,11 +117,11 @@ fn parse_line(raw: &str) -> Line<'_> {
 
 /// The CODEOWNERS file formatted like the VS Code extension did before it
 /// used gh-codeowners: the first owner of every rule in the file lines up,
-/// `alignment_offset + 1` spaces after the longest pattern, counting its
-/// indentation. Only the space between a rule's pattern and its first owner
-/// changes. Indentation, the space between owners, comments, and lines
-/// without owners stay as they are.
-pub fn format_legacy(text: &str, alignment_offset: usize) -> String {
+/// `spacing` spaces after the longest pattern, counting its indentation.
+/// Only the space between a rule's pattern and its first owner changes.
+/// Indentation, the space between owners, comments, and lines without owners
+/// stay as they are.
+pub fn format_file(text: &str, spacing: usize) -> String {
     // Each line, and where its pattern ends and its first owner starts.
     let lines: Vec<(&str, Option<(usize, usize)>)> = text
         .split('\n')
@@ -141,7 +142,7 @@ pub fn format_legacy(text: &str, alignment_offset: usize) -> String {
     else {
         return text.to_string();
     };
-    let column = longest + alignment_offset + 1;
+    let column = longest + spacing.max(1);
     lines
         .iter()
         .map(|&(raw, gap)| match gap {
@@ -262,8 +263,8 @@ foo/b\ ar.py   @x
     }
 
     #[test]
-    fn legacy_lines_up_first_owners_across_the_file() {
-        assert_snapshot!(format_legacy(r"
+    fn file_lines_up_first_owners_across_the_file() {
+        assert_snapshot!(format_file(r"
 *               @foo
   /some-path @bar   @baz   # kept as is
 /docs/**/*.md                     @foo
@@ -272,7 +273,7 @@ foo/b\ ar.py   @x
 /vendor/
 /vendor/ # no owners
 /web/@scoped/ a@example.com
-", 4), @r"
+", 5), @r"
         *                 @foo
           /some-path      @bar   @baz   # kept as is
         /docs/**/*.md     @foo
@@ -285,18 +286,25 @@ foo/b\ ar.py   @x
     }
 
     #[test]
-    fn legacy_offset_is_spaces_after_the_one_that_is_always_there() {
-        assert_eq!(format_legacy("/a/ @x\n/bb/ @y\n", 0), "/a/  @x\n/bb/ @y\n");
-        assert_eq!(format_legacy("/a/ @x\n", 2), "/a/   @x\n");
+    fn spacing_is_the_spaces_after_the_longest_pattern() {
+        assert_eq!(format_file("/a/ @x\n/bb/ @y\n", 1), "/a/  @x\n/bb/ @y\n");
+        assert_eq!(format_file("/a/ @x\n", 3), "/a/   @x\n");
+        assert_eq!(
+            format_group("/a/ @x # c\n/bb/ @y\n", 3),
+            "/a/    @x # c\n/bb/   @y\n"
+        );
+        // At least 1.
+        assert_eq!(format_file("/a/ @x\n", 0), "/a/ @x\n");
+        assert_eq!(format_group("/a/  @x\n", 0), "/a/ @x\n");
     }
 
     #[test]
-    fn legacy_keeps_line_endings_and_files_without_owners() {
+    fn file_keeps_line_endings_and_files_without_owners() {
         assert_eq!(
-            format_legacy("* @x\r\n/a/ @y\r\n", 1),
+            format_file("* @x\r\n/a/ @y\r\n", 2),
             "*    @x\r\n/a/  @y\r\n"
         );
-        assert_eq!(format_legacy("", 4), "");
-        assert_eq!(format_legacy("# only\n  /a/\n", 4), "# only\n  /a/\n");
+        assert_eq!(format_file("", 4), "");
+        assert_eq!(format_file("# only\n  /a/\n", 4), "# only\n  /a/\n");
     }
 }
