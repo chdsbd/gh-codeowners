@@ -2,14 +2,7 @@
 
 ## Releasing
 
-Bump the version in `Cargo.toml` and add a section for it to `CHANGELOG.md`, which CI checks with `s/check-version`. Then push a matching tag:
-
-```
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-[`release.yml`](.github/workflows/release.yml) builds a binary for each platform and attaches it to a GitHub release, named like `gh-codeowners-darwin-arm64`, which is how `gh extension install` finds it.
+Bump the version in `Cargo.toml` and add a section for it to `CHANGELOG.md`, which CI checks with `s/check-version`. When that reaches `main`, [`release.yml`](.github/workflows/release.yml) sees the version has no tag, tags the commit, builds a binary for each platform and attaches it to a GitHub release, named like `gh-codeowners-darwin-arm64`, which is how `gh extension install` finds it.
 
 ## Testing
 

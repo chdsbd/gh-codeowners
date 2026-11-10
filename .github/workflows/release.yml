@@ -1,14 +1,20 @@
 name: Release
 
-# Pushing a tag like v0.1.0 publishes a release with a binary for each
-# platform, named so `gh extension install chdsbd/gh-codeowners` finds them:
+# Pushing a version to main that has no tag yet tags the commit and publishes
+# a release with a binary for each platform, named so
+# `gh extension install chdsbd/gh-codeowners` finds them:
 # gh-codeowners-<GOOS>-<GOARCH>, with .exe on Windows.
 on:
   push:
-    tags:
-      - "v*"
+    branches:
+      - main
 
 permissions: {}
+
+# Two quick pushes shouldn't both see the version as untagged.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   # gh installs from the latest published release, so start with a draft and
@@ -17,23 +23,35 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - name: Check the tag matches Cargo.toml
+      - id: version
         run: |
           version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
-          if [[ "v$version" != "$GITHUB_REF_NAME" ]]; then
-            echo "::error::Tag $GITHUB_REF_NAME doesn't match version $version in Cargo.toml"
-            exit 1
+          tag="v$version"
+          if gh api "repos/$GH_REPO/git/ref/tags/$tag" --silent 2>/dev/null; then
+            echo "$tag already exists"
+          else
+            echo "tag=$tag" >> "$GITHUB_OUTPUT"
           fi
-      - run: gh release create "$GITHUB_REF_NAME" --draft --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
         env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+      - if: steps.version.outputs.tag
+        run: |
+          gh api "repos/$GH_REPO/git/refs" -f "ref=refs/tags/$TAG" -f "sha=$GITHUB_SHA" --silent
+          gh release create "$TAG" --draft --verify-tag --generate-notes --title "$TAG"
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
   build:
     needs: draft
+    if: needs.draft.outputs.tag
     strategy:
       matrix:
         include:
@@ -82,6 +100,7 @@ jobs:
           TARGET: ${{ matrix.target }}
           PLATFORM: ${{ matrix.platform }}
           EXE: ${{ matrix.exe }}
+          TAG: ${{ needs.draft.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
@@ -93,14 +112,15 @@ jobs:
           cargo build --release --locked --target "$TARGET"
           asset="gh-codeowners-$PLATFORM$EXE"
           cp "target/$TARGET/release/gh-codeowners$EXE" "$asset"
-          gh release upload "$GITHUB_REF_NAME" "$asset"
+          gh release upload "$TAG" "$asset"
   publish:
-    needs: build
+    needs: [draft, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - run: gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+      - run: gh release edit "$TAG" --draft=false --latest
         env:
+          TAG: ${{ needs.draft.outputs.tag }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
