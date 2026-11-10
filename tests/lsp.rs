@@ -55,6 +55,10 @@ struct Client {
 
 impl Client {
     fn start(dir: &Path, capabilities: Value) -> Client {
+        Client::start_with_options(dir, capabilities, Value::Null)
+    }
+
+    fn start_with_options(dir: &Path, capabilities: Value, options: Value) -> Client {
         let mut child = Command::new(env!("CARGO_BIN_EXE_gh-codeowners"))
             .args(["lsp", "--stdio"])
             .current_dir(dir)
@@ -97,7 +101,12 @@ impl Client {
         };
         let result = client.request(
             "initialize",
-            json!({ "processId": null, "rootUri": uri(dir), "capabilities": capabilities }),
+            json!({
+                "processId": null,
+                "rootUri": uri(dir),
+                "capabilities": capabilities,
+                "initializationOptions": options,
+            }),
         );
         assert_eq!(result["serverInfo"]["name"], "gh-codeowners");
         client.notify("initialized", json!({}));
@@ -438,6 +447,55 @@ fn formats_each_line_that_changes() {
             "newText": "*      @acme/x",
         }])
     );
+    assert_eq!(client.shutdown(), 0);
+}
+
+#[test]
+fn formats_with_the_alignment_from_the_settings() {
+    let repo = repo("format-align");
+    let codeowners = repo.0.join(".github/CODEOWNERS");
+    let mut client = Client::start_with_options(
+        &repo.0,
+        json!({}),
+        json!({ "format": { "align": "file", "spacing": 3 } }),
+    );
+    client.open(&codeowners, "*  @acme/x   @y\n/docs/ @acme/docs\n");
+    let format = |client: &mut Client| {
+        let edits = client.request(
+            "textDocument/formatting",
+            json!({
+                "textDocument": { "uri": uri(&codeowners) },
+                "options": { "tabSize": 2, "insertSpaces": true },
+            }),
+        );
+        edits
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|edit| edit["newText"].as_str().unwrap().to_string())
+            .collect::<Vec<_>>()
+    };
+    // Only the space before the first owner changes.
+    assert_eq!(
+        format(&mut client),
+        ["*        @acme/x   @y", "/docs/   @acme/docs"]
+    );
+    client.notify(
+        "workspace/didChangeConfiguration",
+        json!({ "settings": { "format": { "align": "group" } } }),
+    );
+    assert_eq!(format(&mut client), ["*      @acme/x @y"]);
+    // Bad settings keep the ones before.
+    client.notify(
+        "workspace/didChangeConfiguration",
+        json!({ "settings": { "format": { "align": "sideways" } } }),
+    );
+    assert_eq!(format(&mut client), ["*      @acme/x @y"]);
+    client.notify(
+        "workspace/didChangeConfiguration",
+        json!({ "settings": { "format": { "spacing": 0 } } }),
+    );
+    assert_eq!(format(&mut client), ["*      @acme/x @y"]);
     assert_eq!(client.shutdown(), 0);
 }
 

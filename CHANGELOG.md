@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## 0.4.0 - 2026-11-10
+
+### Added
+
+- Add `fmt --align group|file` and `--spacing`. `--align file` formats like the VS Code extension did before 5.1.0 (#43).
+- Add the language server setting `format` for `align` and `spacing` (#43).
+
 ## 0.3.0 - 2026-11-09
 
 ### Added

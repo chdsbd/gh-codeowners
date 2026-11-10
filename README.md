@@ -130,6 +130,8 @@ Each group is formatted.
 
 Use `gh codeowners fmt --check` to error if the file isn't formatted.
 
+Use `--align file` to line up owners across the file. Use `--spacing <n>` to change spaces before owners.
+
 ### Editor support
 
 Install [VS Code GitHub Code Owners](https://marketplace.visualstudio.com/items?itemName=chdsbd.github-code-owners) for editor support.

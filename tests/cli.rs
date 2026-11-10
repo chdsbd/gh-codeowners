@@ -621,6 +621,44 @@ fn fmt_formats_stdin_to_stdout() {
     let (status, stdout, _) =
         run_with_stdin(&repo, &["fmt", "--check", "--codeowners", "-"], "*   @a\n");
     assert_eq!((status, stdout.as_str()), (1, ""));
+    let (status, stdout, _) = run_with_stdin(
+        &repo,
+        &["fmt", "--align", "file", "--codeowners", "-"],
+        "*   @a   @b\n  /docs/ @c\n",
+    );
+    assert_eq!(
+        (status, stdout.as_str()),
+        (0, "*        @a   @b\n  /docs/ @c\n")
+    );
+    let (status, stdout, _) = run_with_stdin(
+        &repo,
+        &[
+            "fmt",
+            "--align",
+            "file",
+            "--spacing",
+            "5",
+            "--codeowners",
+            "-",
+        ],
+        "*   @a\n/docs/ @b\n",
+    );
+    assert_eq!(
+        (status, stdout.as_str()),
+        (0, "*          @a\n/docs/     @b\n")
+    );
+    let (status, stdout, _) = run_with_stdin(
+        &repo,
+        &["fmt", "--spacing", "2", "--codeowners", "-"],
+        "*   @a # x\n/docs/ @b\n",
+    );
+    assert_eq!(
+        (status, stdout.as_str()),
+        (0, "*       @a # x\n/docs/  @b\n")
+    );
+    let (status, _, stderr) = run(&repo, &["fmt", "--spacing", "0"]);
+    assert_eq!(status, 2);
+    assert!(stderr.contains("0 is not in 1.."), "{stderr}");
     // --json is only on the commands that print JSON.
     let (status, _, stderr) = run(&repo, &["fmt", "--json"]);
     assert_eq!(status, 2);
